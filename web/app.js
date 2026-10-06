@@ -1,4 +1,4 @@
-// phone-deck client: live WS state, tab switching, action dispatch, PWA niceties.
+// hyprhand client: live WS state, tab switching, action dispatch, PWA niceties.
 "use strict";
 
 const WS_PER_MONITOR = 5;  // workspaces per monitor (must match WS_PER_MONITOR in hypr.py)
@@ -358,7 +358,10 @@ function connectInput() {
   if (inputSock && inputSock.readyState <= 1) return;   // already open/connecting — no dupes
   const proto = location.protocol === "https:" ? "wss" : "ws";
   inputSock = new WebSocket(`${proto}://${location.host}/ws/input`);
-  inputSock.onclose = () => setTimeout(connectInput, 2000);
+  inputSock.onclose = async () => {
+    if (!(await authOk())) { location.href = "/login"; return; }
+    setTimeout(connectInput, 2000);
+  };
 }
 function sendInput(o) {
   if (inputSock && inputSock.readyState === 1) inputSock.send(JSON.stringify(o));
@@ -840,7 +843,7 @@ async function loadModes() {
   const grid = document.getElementById("mode-grid");
   const list = await (await fetch("/modes")).json().catch(() => []);
   if (!list.length) {
-    grid.innerHTML = '<p class="col-span-3 text-zinc-600 text-sm">No modes. Add them to ~/.config/phone-deck/modes.json</p>';
+    grid.innerHTML = '<p class="col-span-3 text-zinc-600 text-sm">No modes. Add them to ~/.config/hyprhand/modes.json</p>';
     return;
   }
   grid.innerHTML = list.map((m) =>
@@ -858,134 +861,6 @@ async function loadModes() {
 }
 
 
-// Voice / STT / Jarvis features not included in hyprhand.
-
-
-  const btn = document.getElementById("voice-btn");
-  const log = document.getElementById("voice-log");
-  const micSel = document.getElementById("voice-mic");
-  if (!btn || !log) return;
-  segInit(micSel);
-  let state = "idle";           // idle | recording | processing
-  let recMode = "desktop";      // captured at Start so a mid-recording switch can't confuse Stop
-  let recorder = null, chunks = [], micStreamV = null;
-  const base = "w-full rounded-xl py-8 text-2xl font-semibold ";
-  const esc = (x) => String(x).replace(/</g, "&lt;");
-
-  function set(s) {
-    state = s;
-    window._voiceBusy = s !== "idle";   // cogitator must never idle-in mid-recording
-    btn.disabled = s === "processing";
-    btn.className = base + (s === "idle" ? "bg-emerald-700"
-      : s === "recording" ? "bg-red-700 animate-pulse" : "bg-zinc-700 opacity-70");
-    btn.textContent = s === "idle" ? "▶ START" : s === "recording" ? "■ STOP" : "··· WORKING";
-  }
-
-  // body of a trace card at a given status: "pending" | "done" | "fail" | "" (info)
-  function cardHTML(t, status) {
-    const heard = t.heard ? `"${esc(t.heard)}"` : "(nothing heard)";
-    const verb = t.verb ? `<span class="text-emerald-400 font-medium">${esc(t.verb)}</span>`
-                        : `<span class="text-zinc-500">no verb</span>`;
-    const detail = `<span class="text-zinc-400">${esc(t.preview || t.note || "")}</span>`;
-    let tail = "";
-    if (status === "pending") tail = ` · <span class="text-emerald-400">tap to run ▶</span>`;
-    else if (status === "done") tail = ` · <span class="text-emerald-400">✓ ${esc(t._result || "")}</span>`;
-    else if (status === "fail") tail = ` · <span class="text-red-400">✗ ${esc(t._result || "failed")}</span>`;
-    return `<div class="text-sm text-zinc-200 truncate">${heard}</div>
-      <div class="text-xs mt-0.5">${verb} · ${detail}${tail}</div>`;
-  }
-
-  // jarvis answers get their own layout: full multi-line text + cited source links,
-  // typed in phosphor-terminal style with a blinking cursor.
-  function renderJarvis(card, t, r) {
-    const answer = (r && r.result) || "no answer";
-    const ok = r && r.ok;
-    let src = "";
-    if (r && r.sources && r.sources.length) {
-      src = '<div class="flex gap-2 flex-wrap mt-2 border-t border-zinc-800 pt-1">' + r.sources.map((s, i) =>
-        `<a href="${esc(s.url)}" target="_blank" rel="noopener" class="text-xs truncate">[${i + 1}] ${esc(s.title)}</a>`).join("") + "</div>";
-    }
-    card.innerHTML = `<div class="jv-friday">FRIDAY</div><div class="text-xs text-zinc-500 truncate">"${esc(t.heard)}"</div>
-      <div class="text-sm ${ok ? "text-zinc-100" : "text-amber-400"} mt-1 whitespace-pre-wrap"><span class="jv-type"></span><span class="jv-cursor">▋</span></div>${src}`;
-    const span = card.querySelector(".jv-type"), cursor = card.querySelector(".jv-cursor");
-    let i = 0;
-    (function tick() {
-      if (i <= answer.length) { span.textContent = answer.slice(0, i++); setTimeout(tick, 11); }
-      else if (cursor) cursor.remove();
-    })();
-  }
-
-  function render(t) {
-    if (!t) { set("idle"); return; }
-    const pending = !!t.plan;
-    const card = document.createElement("div");
-    card.className = "bg-zinc-900 rounded-lg px-3 py-2" + (pending ? " ring-1 ring-emerald-600/50 cursor-pointer" : "");
-    card.innerHTML = cardHTML(t, pending ? "pending" : "");
-    if (pending) {
-      card.onclick = async () => {
-        if (card.dataset.done) return;
-        if (t.plan.confirm && !confirm(`Run "${t.plan.label}"?`)) return;   // extra gate for confirm-flagged
-        card.dataset.done = "1";
-        card.classList.remove("ring-1", "ring-emerald-600/50", "cursor-pointer");
-        const jv = t.plan.lane === "jarvis";
-        if (jv) card.innerHTML = `<div class="text-xs text-zinc-500 truncate">"${esc(t.heard)}"</div>
-          <div class="text-sm text-zinc-400 mt-1">…thinking</div>`;
-        const r = await post("/voice/execute", { plan: t.plan });
-        if (jv) renderJarvis(card, t, r);
-        else {
-          t._result = (r && r.result) || (r && r.ok ? "ok" : "failed");
-          card.innerHTML = cardHTML(t, r && r.ok ? "done" : "fail");
-        }
-      };
-    }
-    log.prepend(card);
-    while (log.children.length > 20) log.removeChild(log.lastChild);
-  }
-
-  async function startDevice() {
-    micStreamV = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true } });
-    chunks = [];
-    recorder = new MediaRecorder(micStreamV);
-    recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-    recorder.start();
-  }
-  function stopDevice() {
-    return new Promise((resolve) => {
-      recorder.onstop = async () => {
-        micStreamV.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-        const fd = new FormData();
-        fd.append("file", blob, "voice.webm");
-        const res = await fetch("/voice/transcribe", { method: "POST", body: fd });
-        if (res.status === 401) { location.href = "/login"; return resolve(null); }
-        resolve(await res.json().catch(() => null));
-      };
-      recorder.stop();
-    });
-  }
-
-  btn.onclick = async () => {
-    if (state === "idle") {
-      recMode = segValue(micSel) === "device" ? "device" : "desktop";
-      try {
-        if (recMode === "device") { await startDevice(); set("recording"); }
-        else {
-          const r = await post("/voice/start");
-          if (r && r.ok) set("recording");
-          else render({ heard: "", verb: null, note: (r && r.error) || "mic unavailable", plan: null });
-        }
-      } catch (e) {
-        render({ heard: "", verb: null, note: "mic permission denied", plan: null });
-      }
-    } else if (state === "recording") {
-      set("processing");
-      render(recMode === "device" ? await stopDevice() : await post("/voice/stop"));
-      set("idle");
-    }
-  };
-  set("idle");
-})();
 
 // ---- live state rendering ----
 // Band telemetry readouts. Each readout self-colors by its worst signal: amber at
@@ -1133,9 +1008,9 @@ function renderWorkspaces(s) {
         clearTimeout(dragState.timer);
         if (dragState.isDragging) {
           if (dragState.targetWsEl) {
-            post("/hypr/workspace", { 
-              id: Number(dragState.targetWsEl.dataset.ws), 
-              address: dragState.addr 
+            post("/hypr/move", { 
+              workspace: Number(dragState.targetWsEl.dataset.ws),
+              address: dragState.addr
             });
             dragState.targetWsEl.style.boxShadow = "";
           }
@@ -1332,6 +1207,11 @@ function render(s) {
   cogFeed(s);
 }
 
+async function authOk() {
+  try { return (await fetch("/input/available")).status !== 401; }
+  catch (_) { return true; } // network blip: keep trying
+}
+
 function connect() {
   if (mainSock && mainSock.readyState <= 1) return;   // already open/connecting — no dupes
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -1339,7 +1219,13 @@ function connect() {
   mainSock = sock;
   const dot = document.getElementById("st-conn");
   sock.onopen = () => dot.classList.replace("bg-zinc-600", "bg-emerald-500");
-  sock.onclose = () => { dot.classList.replace("bg-emerald-500", "bg-zinc-600"); setTimeout(connect, 2000); };
+
+  sock.onclose = async () => {
+    dot.classList.replace("bg-emerald-500", "bg-zinc-600");
+    if (!(await authOk())) { location.href = "/login"; return; }
+    setTimeout(connect, 2000);
+  };
+
   sock.onmessage = (e) => render(JSON.parse(e.data));
 }
 // responsive density: tag <html> so the UI can adapt to a fine-pointer / wide screen

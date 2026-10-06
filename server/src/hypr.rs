@@ -1,17 +1,28 @@
-//! Hyprland IPC: watch events and dispatch commands via hyprctl.
+//! Hyprland IPC over its Unix sockets directly (no hyprctl, no hyprland-rs).
+//!
+//! Wire format (same as what hyprctl speaks):
+//!   command socket  `.socket.sock`   write `[flags]/command args`, read reply until EOF
+//!                                    e.g. `j/monitors`, `/dispatch <arg>`
+//!   event socket    `.socket2.sock`  streams `EVENT>>DATA\n`
+//!
+//! Since Hyprland 0.55 a `hyprland.lua` config makes `/dispatch` evaluate its
+//! argument as Lua (`return hl.dispatch(<arg>)`), so the legacy
+//! `workspace 3` form is rejected. We probe once with `hl.dsp.no_op()` and then
+//! send either `hl.dsp.*(...)` (Lua) or the legacy string (hyprlang configs).
 
 use std::sync::Arc;
 
-use protocol::{ActiveWindow, DeckState, Monitor, Window};
+use protocol::{ActiveWindow, Monitor, Window};
 use tokio::{
-    io::{AsyncBufReadExt, BufReader},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::UnixStream,
-    time::{sleep, Duration},
+    sync::OnceCell,
+    time::{sleep, timeout, Duration},
 };
 
 use crate::state::AppState;
 
-// ── Hyprland socket paths ─────────────────────────────────────────────────────
+// ── Socket paths ──────────────────────────────────────────────────────────────
 
 fn his() -> String {
     std::env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap_or_default()
@@ -31,58 +42,109 @@ fn event_socket_path() -> String {
     format!("{}/hypr/{}/.socket2.sock", runtime_dir(), his())
 }
 
-// ── hyprctl helper ────────────────────────────────────────────────────────────
+// ── Raw command socket ────────────────────────────────────────────────────────
 
-async fn hyprctl_json(cmd: &str) -> Option<serde_json::Value> {
-    let out = tokio::process::Command::new("hyprctl")
-        .arg("-j")
-        .arg(cmd)
-        .output()
-        .await
-        .ok()?;
-    if out.status.success() {
-        serde_json::from_slice(&out.stdout).ok()
-    } else {
-        None
+/// One request = one connection. Hyprland replies and closes, so read to EOF.
+async fn request(payload: &str) -> Option<String> {
+    let path = socket_path();
+    let fut = async {
+        let mut s = UnixStream::connect(&path).await?;
+        s.write_all(payload.as_bytes()).await?;
+        let mut buf = Vec::new();
+        s.read_to_end(&mut buf).await?;
+        Ok::<_, std::io::Error>(buf)
+    };
+    match timeout(Duration::from_secs(3), fut).await {
+        Ok(Ok(buf)) => Some(String::from_utf8_lossy(&buf).into_owned()),
+        Ok(Err(e)) => {
+            tracing::debug!("hyprland socket error for `{payload}`: {e}");
+            None
+        }
+        Err(_) => {
+            tracing::warn!("hyprland socket timed out for `{payload}`");
+            None
+        }
     }
 }
 
-async fn hyprctl_dispatch(dispatch: &str, args: &[&str]) -> bool {
-    let mut cmd = tokio::process::Command::new("hyprctl");
-    cmd.arg("dispatch").arg(dispatch);
-    for a in args { cmd.arg(a); }
-    cmd.stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
+/// `j/<cmd>` → parsed JSON (monitors, clients, activewindow, ...).
+async fn query_json(cmd: &str) -> Option<serde_json::Value> {
+    let reply = request(&format!("j/{cmd}")).await?;
+    serde_json::from_str(&reply).ok()
+}
+
+// ── Lua vs legacy dispatch ────────────────────────────────────────────────────
+
+static LUA_MODE: OnceCell<bool> = OnceCell::const_new();
+
+/// True when the running compositor evaluates dispatch args as Lua.
+/// `hl.dsp.no_op()` is side-effect free and only parses under a Lua config.
+/// Not cached if Hyprland was unreachable, so it re-probes next time.
+async fn lua_mode() -> bool {
+    LUA_MODE
+        .get_or_try_init(|| async {
+            let r = request("/dispatch hl.dsp.no_op()").await.ok_or(())?;
+            let lua = r.trim() == "ok";
+            tracing::info!(
+                "Hyprland dispatch mode: {}",
+                if lua { "lua (0.55+)" } else { "legacy" }
+            );
+            Ok::<_, ()>(lua)
+        })
         .await
-        .map(|s| s.success())
+        .copied()
         .unwrap_or(false)
 }
 
-async fn hyprctl_eval(expr: &str) -> bool {
-    tokio::process::Command::new("hyprctl")
-        .arg("keyword")
-        .arg("exec")
-        .arg(expr)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .await
-        .map(|s| s.success())
+async fn dispatch(lua: String, legacy: String) -> bool {
+    let cmd = if lua_mode().await { lua } else { legacy };
+    match request(&format!("/dispatch {cmd}")).await {
+        Some(r) if r.trim() == "ok" => true,
+        Some(r) => {
+            tracing::warn!("dispatch `{cmd}` rejected: {}", r.trim());
+            false
+        }
+        None => false,
+    }
+}
+
+/// Quote a Rust string as a Lua string literal. Inputs come from HTTP
+/// requests, so this must escape properly to avoid Lua injection.
+fn lua_str(s: &str) -> String {
+    let mut o = String::with_capacity(s.len() + 2);
+    o.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => o.push_str("\\\\"),
+            '"' => o.push_str("\\\""),
+            '\n' => o.push_str("\\n"),
+            '\r' => o.push_str("\\r"),
+            c if c.is_control() => o.push_str(&format!("\\{:03}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+/// Window addresses look like `0x55d0c8a1b2c0`. Reject anything else.
+fn valid_addr(a: &str) -> bool {
+    a.strip_prefix("0x")
+        .map(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_hexdigit()))
         .unwrap_or(false)
 }
 
 // ── Snapshot ──────────────────────────────────────────────────────────────────
 
 pub async fn snapshot() -> protocol::HyprState {
-    let monitors_val = hyprctl_json("monitors").await.unwrap_or_default();
-    let clients_val = hyprctl_json("clients").await.unwrap_or_default();
-    let active_val = hyprctl_json("activewindow").await.unwrap_or_default();
+    let monitors_val = query_json("monitors").await.unwrap_or_default();
+    let clients_val = query_json("clients").await.unwrap_or_default();
+    let active_val = query_json("activewindow").await.unwrap_or_default();
 
     let monitors_arr = monitors_val.as_array().cloned().unwrap_or_default();
     let clients_arr = clients_val.as_array().cloned().unwrap_or_default();
 
-    // Build id→name map for clients
+    // monitor id → name, for clients (which only carry the monitor id)
     let id_to_name: std::collections::HashMap<i64, String> = monitors_arr
         .iter()
         .filter_map(|m| {
@@ -122,7 +184,8 @@ pub async fn snapshot() -> protocol::HyprState {
                 title: c["title"].as_str().unwrap_or("").chars().take(60).collect(),
                 cls: c["class"].as_str().unwrap_or("").to_string(),
                 ws: c["workspace"]["id"].as_i64().map(|v| v as i32),
-                monitor: c["monitor"].as_i64()
+                monitor: c["monitor"]
+                    .as_i64()
                     .and_then(|id| id_to_name.get(&id))
                     .cloned()
                     .unwrap_or_default(),
@@ -143,49 +206,110 @@ pub async fn snapshot() -> protocol::HyprState {
 // ── Dispatchers ───────────────────────────────────────────────────────────────
 
 pub async fn focus_workspace(id: i32) -> bool {
-    hyprctl_dispatch("workspace", &[&id.to_string()]).await
+    dispatch(
+        format!(r#"hl.dsp.focus({{ workspace = "{id}" }})"#),
+        format!("workspace {id}"),
+    )
+    .await
 }
 
 pub async fn set_dpms(monitor: &str, on: bool) -> bool {
-    let state = if on { "on" } else { "off" };
-    hyprctl_dispatch("dpms", &[state, monitor]).await
+    let action = if on { "enable" } else { "disable" };
+    dispatch(
+        format!(
+            "hl.dsp.dpms({{ action = {}, monitor = {} }})",
+            lua_str(action),
+            lua_str(monitor)
+        ),
+        format!("dpms {} {monitor}", if on { "on" } else { "off" }),
+    )
+    .await
 }
 
 pub async fn focus_window(address: &str) -> bool {
-    if address.is_empty() { return false; }
-    hyprctl_dispatch("focuswindow", &[&format!("address:{address}")]).await
+    if !valid_addr(address) {
+        return false;
+    }
+    dispatch(
+        format!(
+            "hl.dsp.focus({{ window = {} }})",
+            lua_str(&format!("address:{address}"))
+        ),
+        format!("focuswindow address:{address}"),
+    )
+    .await
 }
 
+/// Move a window to a workspace without following it (the old `movetoworkspacesilent`).
 pub async fn move_window_to_workspace_by_address(address: &str, ws: i32) -> bool {
-    hyprctl_dispatch(
-        "movetoworkspacesilent",
-        &[&format!("{ws},address:{address}")],
+    if !valid_addr(address) {
+        return false;
+    }
+    dispatch(
+        format!(
+            "hl.dsp.window.move({{ workspace = {}, window = {}, follow = false }})",
+            lua_str(&ws.to_string()),
+            lua_str(&format!("address:{address}"))
+        ),
+        format!("movetoworkspacesilent {ws},address:{address}"),
     )
     .await
 }
 
 pub async fn close_window(address: &str) -> bool {
-    hyprctl_dispatch("closewindow", &[&format!("address:{address}")]).await
+    if !valid_addr(address) {
+        return false;
+    }
+    dispatch(
+        format!(
+            "hl.dsp.window.close({{ window = {} }})",
+            lua_str(&format!("address:{address}"))
+        ),
+        format!("closewindow address:{address}"),
+    )
+    .await
 }
 
 pub async fn move_cursor(x: i32, y: i32) -> bool {
-    hyprctl_dispatch("movecursor", &[&x.to_string(), &y.to_string()]).await
+    dispatch(
+        format!("hl.dsp.cursor.move({{ x = {x}, y = {y} }})"),
+        format!("movecursor {x} {y}"),
+    )
+    .await
 }
 
 pub async fn send_shortcut(cls: &str, key: &str, mods: &str) -> bool {
-    if cls.is_empty() || key.is_empty() { return false; }
-    let arg = format!("{mods},{key},class:{cls}");
-    hyprctl_dispatch("sendshortcut", &[&arg]).await
+    if cls.is_empty() || key.is_empty() {
+        return false;
+    }
+    dispatch(
+        format!(
+            "hl.dsp.send_shortcut({{ mods = {}, key = {}, window = {} }})",
+            lua_str(mods),
+            lua_str(key),
+            lua_str(&format!("class:{cls}"))
+        ),
+        format!("sendshortcut {mods},{key},class:{cls}"),
+    )
+    .await
 }
 
-/// Execute a command string on a specific workspace.
+/// Execute a command string on a specific workspace (silently).
 pub async fn exec_on_workspace(cmd: &str, workspace: i32) -> bool {
-    hyprctl_dispatch("exec", &[&format!("[workspace {workspace} silent] {cmd}")]).await
+    dispatch(
+        format!(
+            "hl.dsp.exec_cmd({}, {{ workspace = {} }})",
+            lua_str(cmd),
+            lua_str(&format!("{workspace} silent"))
+        ),
+        format!("exec [workspace {workspace} silent] {cmd}"),
+    )
+    .await
 }
 
 /// Return clients list as raw JSON.
 pub async fn clients_json() -> Vec<serde_json::Value> {
-    hyprctl_json("clients")
+    query_json("clients")
         .await
         .and_then(|v| v.as_array().cloned())
         .unwrap_or_default()
@@ -204,21 +328,20 @@ const INTERESTING_EVENTS: &[&str] = &[
     "monitorremoved",
 ];
 
-/// Watch Hyprland's event socket. Reconnects with backoff on disconnect.
-/// Calls `state.publish()` with an updated hypr snapshot on each interesting event.
+/// Watch Hyprland's event socket (`EVENT>>DATA` lines). Reconnects on disconnect.
+/// Publishes an updated hypr snapshot on each interesting event.
 pub async fn watch_events(state: Arc<AppState>) {
     loop {
         let path = event_socket_path();
         match UnixStream::connect(&path).await {
             Ok(stream) => {
                 tracing::info!("connected to Hyprland event socket at {path}");
-                let reader = BufReader::new(stream);
-                let mut lines = reader.lines();
+                let mut lines = BufReader::new(stream).lines();
                 loop {
                     match lines.next_line().await {
                         Ok(Some(line)) => {
-                            let event = line.split(">>").next().unwrap_or("").trim().to_string();
-                            if INTERESTING_EVENTS.contains(&event.as_str()) {
+                            let event = line.split_once(">>").map(|(e, _)| e).unwrap_or(&line);
+                            if INTERESTING_EVENTS.contains(&event.trim()) {
                                 let mut s = state.current_state().as_ref().clone();
                                 s.hypr = snapshot().await;
                                 state.publish(s);

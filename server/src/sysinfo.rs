@@ -49,7 +49,7 @@ pub async fn tailscale_info() -> TailscaleInfo {
 
 pub fn top_procs(n: usize) -> Vec<ProcessInfo> {
     let mut sys = System::new();
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    sys.refresh_processes();
 
     // Get own UID for "mine" flag
     let my_uid = unsafe { libc::getuid() };
@@ -62,7 +62,7 @@ pub fn top_procs(n: usize) -> Vec<ProcessInfo> {
             let uid = proc_.user_id().map(|u| **u as u32).unwrap_or(u32::MAX);
             ProcessInfo {
                 pid: pid.as_u32(),
-                name: proc_.name().to_string_lossy().chars().take(22).collect(),
+                name: proc_.name().to_string().chars().take(22).collect(),
                 mem: (proc_.memory() as f64 / total_mem as f64 * 100.0) as f32,
                 mine: uid == my_uid,
             }

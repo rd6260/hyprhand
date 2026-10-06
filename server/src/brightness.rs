@@ -15,12 +15,16 @@ struct BrightState {
     bl_device: String,                     // backlight: brightnessctl device name
 }
 
-static STATE: Mutex<BrightState> = Mutex::new(BrightState {
-    detected: false,
-    bus_by_monitor: HashMap::new(),
-    bl_monitor: String::new(),
-    bl_device: String::new(),
-});
+static STATE: OnceLock<Mutex<BrightState>> = OnceLock::new();
+
+fn state() -> &'static Mutex<BrightState> {
+    STATE.get_or_init(|| Mutex::new(BrightState {
+        detected: false,
+        bus_by_monitor: HashMap::new(),
+        bl_monitor: String::new(),
+        bl_device: String::new(),
+    }))
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -149,14 +153,14 @@ fn edp_monitor_name() -> String {
 // ── Detection (runs once) ─────────────────────────────────────────────────────
 
 async fn ensure_detected() {
-    let already = STATE.lock().unwrap().detected;
+    let already = state().lock().unwrap().detected;
     if already { return; }
 
     let ddc_text = cmd_out(&["ddcutil", "detect", "--brief"], 25).await;
     let bus_map = parse_ddc(&ddc_text);
     let bl = detect_backlight();
 
-    let mut s = STATE.lock().unwrap();
+    let mut s = state().lock().unwrap();
     s.detected = true;
     s.bus_by_monitor = bus_map;
     if let Some((mon, dev)) = bl {
@@ -174,7 +178,7 @@ pub async fn levels() -> HashMap<String, i32> {
 
     // DDC monitors
     let buses: Vec<(String, u32)> = {
-        let s = STATE.lock().unwrap();
+        let s = state().lock().unwrap();
         s.bus_by_monitor.iter().map(|(k, v)| (k.clone(), *v)).collect()
     };
     for (name, bus) in buses {
@@ -187,7 +191,7 @@ pub async fn levels() -> HashMap<String, i32> {
 
     // Backlight
     let (bl_mon, _bl_dev) = {
-        let s = STATE.lock().unwrap();
+        let s = state().lock().unwrap();
         (s.bl_monitor.clone(), s.bl_device.clone())
     };
     if !bl_mon.is_empty() {
@@ -204,7 +208,7 @@ pub async fn set_level(monitor: &str, pct: i32) -> bool {
     let pct = pct.clamp(0, 100);
 
     let (bus, bl_mon, bl_dev) = {
-        let s = STATE.lock().unwrap();
+        let s = state().lock().unwrap();
         let bus = s.bus_by_monitor.get(monitor).copied();
         (bus, s.bl_monitor.clone(), s.bl_device.clone())
     };

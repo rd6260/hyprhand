@@ -1,20 +1,17 @@
 //! Auth: PIN hashing (argon2), JWT issue/verify, cookie middleware, lockout.
 
 use std::{
-    collections::HashMap,
-    net::IpAddr,
     sync::Mutex,
     time::{Duration, Instant},
 };
 
 use anyhow::Context;
 use argon2::{
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
-    Argon2, PasswordHasher as _,
+    password_hash::{PasswordHash, PasswordVerifier, SaltString},
+    Argon2, PasswordHasher,
 };
 use axum::{
-    body::Body,
-    extract::Request,
+    extract::{Request, State},
     http::{header, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -63,7 +60,7 @@ pub fn load_or_create_secrets() -> anyhow::Result<Secrets> {
     // Generate a fresh JWT key.
     let mut key_bytes = [0u8; 32];
     OsRng.fill_bytes(&mut key_bytes);
-    let jwt_key = hex::encode(key_bytes);
+    let jwt_key = hex::encode(&key_bytes);
 
     let secrets = Secrets { jwt_key, pin_hash: None };
     save_secrets(&secrets)?;
@@ -200,9 +197,9 @@ impl AuthState {
 
 /// Axum middleware: check session cookie on every protected route (HTTP + WS upgrades).
 pub async fn auth_middleware(
-    State(state): axum::extract::State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     jar: CookieJar,
-    req: Request<Body>,
+    req: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
     let jwt_key = &state.secrets.jwt_key;

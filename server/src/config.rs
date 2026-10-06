@@ -9,12 +9,10 @@
 use std::{
     fs,
     os::unix::fs::DirBuilderExt,
-    path::{Path, PathBuf},
-    sync::Arc,
+    path::PathBuf,
 };
 
 use anyhow::Context;
-use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 
 // ── Paths ─────────────────────────────────────────────────────────────────────

@@ -324,7 +324,7 @@ fn md5_short(s: &str) -> u64 {
 
 // urlencoding: simple percent-decode
 mod urlencoding {
-    pub fn decode(s: &str) -> Result<std::borrow::Cow<str>, ()> {
+    pub fn decode(s: &str) -> Result<std::borrow::Cow<'_, str>, ()> {
         if !s.contains('%') { return Ok(s.into()); }
         let mut out = String::with_capacity(s.len());
         let bytes = s.as_bytes();

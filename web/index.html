@@ -1,0 +1,672 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>deck</title>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="theme-color" content="#000000">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Chakra+Petch:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    .sel {
+      appearance: none; -webkit-appearance: none;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23a1a1aa' stroke-width='1.5'><path d='M4 6l4 4 4-4'/></svg>");
+      background-repeat: no-repeat; background-position: right .55rem center; background-size: .7rem;
+      padding-right: 1.6rem;
+    }
+    .sel option { background: #18181b; color: #e4e2e3; }
+  </style>
+  <style>
+    /* ── Ambient Cogitator (V2.5): idle screen. Dim by design (~50% deck
+       luminance — the design IS the dimmer), phosphor vars so profiles apply. ── */
+    #cog { position:fixed; inset:0; z-index:70; background:#000; cursor:none; }
+    #cog.hidden { display:none; }
+    #cog-drift { height:100%; padding:22px 26px 14px; display:grid;
+      grid-template-columns:30% 1fr; grid-template-rows:1fr auto auto;
+      gap:10px 18px; will-change:transform; }
+    #cog-left { grid-row:1; display:flex; flex-direction:column; min-height:0; }
+    #cog-clock { font-size:clamp(40px,9.5vw,88px); font-weight:600; line-height:1;
+      color:color-mix(in srgb, var(--p-primary) 78%, transparent);
+      text-shadow:0 0 20px color-mix(in srgb, var(--p-primary) 28%, transparent); }
+    #cog-clock .cln { transition:opacity .15s; } #cog-clock .cln.off { opacity:.15; }
+    #cog-date { margin-top:8px; font-size:13px; letter-spacing:.22em;
+      color:color-mix(in srgb, var(--p-primary) 40%, transparent); }
+    #cog-uptime { margin-top:4px; font-size:11px; letter-spacing:.18em;
+      color:color-mix(in srgb, var(--p-primary) 28%, transparent); }
+    .cog-socket { font-size:9px; letter-spacing:.2em; text-align:center;
+      border:1px dashed color-mix(in srgb, var(--p-primary) 12%, transparent);
+      border-radius:6px; color:color-mix(in srgb, var(--p-primary) 15%, transparent); }
+    #cog-socket-outposts { margin-top:auto; padding:8px; }
+    #cog-stack { grid-column:2; grid-row:1; position:relative; overflow:hidden;
+      border:1px solid color-mix(in srgb, var(--p-primary) 14%, transparent);
+      border-radius:6px; }
+    #cog-cv { position:absolute; inset:0; width:100%; height:100%; display:block; }
+    #cog-np { grid-column:1/3; display:flex; align-items:center; gap:12px; min-height:56px; }
+    #cog-artwrap { position:relative; width:52px; height:52px; border-radius:4px;
+      overflow:hidden; flex:none;
+      border:1px solid color-mix(in srgb, var(--p-primary) 18%, transparent); }
+    #cog-artwrap img { width:100%; height:100%; object-fit:cover; display:block;
+      filter:grayscale(1) contrast(1.06) brightness(.92); }
+    #cog-artwrap::after { content:""; position:absolute; inset:0;
+      background:var(--p-primary); mix-blend-mode:multiply; }
+    #cog-np-main { min-width:0; flex:1; }
+    #cog-np-status { font-size:10px; letter-spacing:.2em; color:rgba(255,176,0,.55); }
+    #cog-np-title { margin-top:2px; font-size:13px; white-space:nowrap; overflow:hidden;
+      text-overflow:ellipsis; color:color-mix(in srgb, var(--p-primary) 58%, transparent); }
+    #cog-socket-wave { width:130px; align-self:stretch; display:flex;
+      align-items:center; justify-content:center; }
+    #cog-wave-cv { width:120px; height:38px; display:block; }
+    #cog-liturgy { grid-column:1/3; font-size:10px; letter-spacing:.14em; text-align:center;
+      padding-bottom:2px; transition:opacity 1.2s;
+      color:color-mix(in srgb, var(--p-primary) 26%, transparent); }
+    #cog-liturgy.fade { opacity:0; }
+  </style>
+  <style>
+    /* ═══════════ V3 SHELL — band · body · center · rail · dock · home ═══════════
+       Structure lives here; colour comes from theme.css's --p-* vars (same pattern
+       the cogitator uses), so all four phosphor profiles re-theme the shell for free. */
+    :root { --sh-line:color-mix(in srgb, var(--p-primary) 16%, transparent);
+            --sh-line2:color-mix(in srgb, var(--p-primary) 30%, transparent);
+            --sh-active:color-mix(in srgb, var(--p-primary) 18%, #000); }
+
+    /* Chakra-Petch structural labels. The !important + class specificity beats
+       theme.css's global *{font-family:'IBM Plex Mono'!important}. Data stays mono. */
+    #host-switch, .drow, .phead h2, .phead .back, .phead .sub, .lbtn, .vpct, .ctxlab {
+      font-family:'Chakra Petch','IBM Plex Mono',monospace !important; }
+
+    .app { height:100%; display:flex; flex-direction:column; }
+
+    /* strip theme.css's button frame off shell chrome (wordmark, band icons) */
+    #host-switch, .band .btn-i {
+      border:none !important; background:none !important; }
+    #host-switch { padding:0 !important; }
+
+    /* BAND */
+    .band { height:36px; flex:none; display:flex; align-items:center; gap:12px; padding:0 12px;
+      border-bottom:1px solid var(--sh-line);
+      background:color-mix(in srgb, var(--p-bg) 82%, var(--p-surface)); }
+    .wordmark { display:flex; align-items:center; gap:6px; letter-spacing:.22em; font-size:13px; flex:none; cursor:pointer; }
+    .wordmark .car { font-size:8px; opacity:.5; }
+    .telem { flex:1; min-width:0; display:flex; align-items:center; gap:10px;
+      overflow-x:auto; white-space:nowrap; font-size:11px; scrollbar-width:none; }
+    .telem::-webkit-scrollbar { display:none; }
+    /* a readout self-colors by its worst signal (ID+class beats theme.css's boxed #st-* rule) */
+    #st-gpu.warn, #st-cpu.warn { color:var(--p-secondary) !important;
+      border-color:color-mix(in srgb, var(--p-secondary) 45%, transparent) !important; }
+    #st-gpu.alert, #st-cpu.alert { color:#ff5252 !important;
+      border-color:color-mix(in srgb, #ff5252 50%, transparent) !important; }
+    .band .cluster { display:flex; align-items:center; gap:10px; font-size:11px; color:var(--p-on-var); }
+    .band .btn-i { color:var(--p-on-var); font-size:14px; cursor:pointer; padding:0 2px; }
+
+    /* BODY */
+    .body { flex:1; display:flex; min-height:0; }
+    .center { flex:1; min-width:0; min-height:0; display:flex; padding:8px; overflow:hidden; }
+    .rail { width:20%; min-width:150px; flex:none; display:flex; flex-direction:column; gap:8px; padding:8px;
+      border-left:1px solid var(--sh-line);
+      background:color-mix(in srgb, var(--p-bg) 70%, var(--p-surface)); }
+
+    /* HOME — workspace columns + a common context strip below them */
+    .home { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; gap:6px; }
+    .home.hide { display:none; }
+    .wsgrid { flex:1; min-height:0; display:grid; grid-template-columns:repeat(3,1fr);
+      grid-template-rows:minmax(0,1fr); gap:8px; }
+    /* common context-aware controls (context.json apps + call), below the columns; hidden when empty */
+    .ctx { flex:none; display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+      padding:7px 4px 1px; border-top:1px solid var(--sh-line); }
+    .ctx:empty { display:none; }
+    .ctxrow { display:flex; align-items:center; gap:6px; }
+    .ctxlab { font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--p-secondary); }
+    .ctxbtn { font-size:11px; padding:3px 9px; color:var(--p-on); background:var(--p-low); cursor:pointer; }
+    .ctxbtn.muted { border-color:#ff5252 !important; color:#ff5252 !important; }
+
+    /* RAIL/AUDIO controls — sized by urgency: volume + transport are pinch-hit targets, so
+       they get real framed buttons + a fat slider (dock stays lean = deliberate taps).
+       Same classes are reused in the Audio panel as a redundant copy. */
+    .vol { display:flex; align-items:center; gap:8px; }
+    .vol .m { flex:none; width:34px; height:34px; display:flex; align-items:center; justify-content:center;
+      font-size:15px; cursor:pointer; color:var(--p-on); background:var(--p-high);
+      border:1px solid var(--sh-line); border-radius:8px; }
+    .vpct { font-size:10px; color:var(--p-on-var); width:28px; text-align:right; flex:none; }
+    .vol input[type=range] { flex:1; min-width:0; height:26px; cursor:pointer;
+      -webkit-appearance:none; appearance:none; background:transparent; }
+    .vol input[type=range]::-webkit-slider-runnable-track { height:8px; border-radius:5px;
+      background:var(--p-high); border:1px solid var(--sh-line); }
+    .vol input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:22px; height:22px; margin-top:-8px;
+      border-radius:50%; background:var(--p-primary);
+      box-shadow:0 0 8px color-mix(in srgb, var(--p-primary) 55%, transparent); }
+    .trans { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+    .trans .media { display:flex; align-items:center; justify-content:center; cursor:pointer;
+      padding:12px 0; font-size:18px; color:var(--p-on); background:var(--p-high); border-radius:8px; }
+    .trans .media.pp-btn { color:var(--p-primary);
+      box-shadow:inset 0 0 12px color-mix(in srgb, var(--p-primary) 12%, transparent); }
+    .trans .media:active { box-shadow:0 0 8px color-mix(in srgb, var(--p-primary) 40%, transparent); }
+    /* seek bar — shown in the Audio panel below the album art */
+    .seek-wrap { display:flex; align-items:center; gap:6px; }
+    .seek-time { font-size:10px; color:var(--p-on-var); width:28px; flex:none; }
+    .seek-time:last-child { text-align:right; }
+    .seek-slider { flex:1; min-width:0; height:26px; cursor:pointer;
+      -webkit-appearance:none; appearance:none; background:transparent; }
+    .seek-slider::-webkit-slider-runnable-track { height:8px; border-radius:5px;
+      background:var(--p-high); border:1px solid var(--sh-line); }
+    .seek-slider::-webkit-slider-thumb { -webkit-appearance:none; width:22px; height:22px; margin-top:-8px;
+      border-radius:50%; background:var(--p-primary);
+      box-shadow:0 0 8px color-mix(in srgb, var(--p-primary) 55%, transparent); }
+    .seek-wrap.no-track { opacity:.35; pointer-events:none; }
+    /* now-playing ping-pong scroll */
+    .np-scroll-mask { width:100%; overflow:hidden; }
+    .np-scroll-text {
+      font-size:0.75rem; color:var(--p-on-var, #a1a1aa);
+      white-space:nowrap; display:inline-block;
+      animation: np-bounce var(--np-dur, 6s) ease-in-out infinite;
+      animation-play-state: var(--np-play, paused);
+    }
+    @keyframes np-bounce {
+      /* ease-out on each slide: full speed at start, eases to a smooth stop */
+      0%   { transform: translateX(0);              animation-timing-function: linear; }
+      15%  { transform: translateX(0);              animation-timing-function: cubic-bezier(0.25, 0, 0.1, 1); } /* slide → end */
+      45%  { transform: translateX(var(--np-tx, 0px)); animation-timing-function: linear; }
+      60%  { transform: translateX(var(--np-tx, 0px)); animation-timing-function: cubic-bezier(0.25, 0, 0.1, 1); } /* slide → start */
+      90%  { transform: translateX(0);              animation-timing-function: linear; }
+      100% { transform: translateX(0); }
+    }
+    /* mute buttons/glyphs turn red when muted — !important beats theme.css's .bg-zinc-800 repaint */
+    [data-mute].muted { background:color-mix(in srgb, #ff5252 22%, #000) !important;
+      border-color:#ff5252 !important; color:#ff5252 !important; }
+    .rail .rule { height:1px; background:var(--sh-line); margin:2px 0; }
+    .dock { display:flex; flex-direction:column; gap:5px; flex:1; }
+    .drow { display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:pointer;
+      background:var(--p-high); border:1px solid var(--sh-line); border-radius:6px;
+      color:var(--p-on); letter-spacing:.12em; font-size:11px; text-transform:uppercase; }
+    .drow .t { opacity:.4; font-size:10px; }
+    .drow.on { background:var(--sh-active); border-color:var(--p-primary); color:var(--p-primary);
+      box-shadow:0 0 9px color-mix(in srgb, var(--p-primary) 40%, transparent); }
+    .drow.more { margin-top:auto; color:var(--p-on-var); }
+
+    /* PANELS — summoned into the center; internals reuse the live components + theme.css */
+    .panel { display:none; }
+    .panel.show { display:flex; flex:1; min-height:0; flex-direction:column; gap:10px; padding:6px 4px; animation:pboot .42s ease-out; }
+    
+    /* Maximize remote tab */
+    body.remote-maximized .band,
+    body.remote-maximized .rail { display: none !important; }
+    body.remote-maximized .center { padding: 4px !important; }
+    
+    .phead { display:flex; align-items:center; gap:10px; flex:none; }
+    .phead h2 { letter-spacing:.2em; text-transform:uppercase; font-size:15px; color:var(--p-primary);
+      text-shadow:0 0 7px color-mix(in srgb, var(--p-primary) 45%, transparent); }
+    .phead .back { letter-spacing:.14em; font-size:10px; text-transform:uppercase; color:var(--p-on-var); cursor:pointer; }
+    .phead .sub { font-size:11px; color:var(--p-on-var); }
+    .launch { display:flex; gap:14px; }
+    .lbtn { flex:1; display:flex; align-items:center; justify-content:center; cursor:pointer;
+      border:1px solid var(--sh-line); border-radius:8px; background:var(--p-high);
+      color:var(--p-on); letter-spacing:.2em; font-size:15px; text-transform:uppercase; }
+
+    /* ═══════════ REMOTE: swipeable trackpad / keyboard ═══════════ */
+    .remote-body { flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+    .remote-swiper { flex:1; min-height:0; position:relative; overflow:hidden; }
+    .remote-track { position:absolute; inset:0; display:flex; width:200%;
+      transition:transform .32s cubic-bezier(.4,0,.2,1); will-change:transform; }
+    .remote-track.no-anim { transition:none; }
+    .remote-pane { width:calc(50% - 20px); flex:none; height:100%; display:flex; flex-direction:column; }
+
+    /* Trackpad pane internals */
+    .remote-tp-area { flex:1; min-height:0; display:flex; flex-direction:column; gap:6px; padding:4px; }
+
+    /* Keyboard pane internals */
+    .remote-kb-area { flex:1; min-height:0; display:flex; flex-direction:column;
+      gap:3px; padding:4px 6px; }
+    .kb-row { display:flex; gap:2px; flex:none; }
+    .kb-key { flex:none; min-width:0; height:36px; display:flex; align-items:center; justify-content:center;
+      background:var(--p-high); border:1px solid var(--sh-line); border-radius:5px;
+      color:var(--p-on); font-size:11px; cursor:pointer; user-select:none;
+      transition:background .1s, box-shadow .1s, color .1s, border-color .1s;
+      font-family:'IBM Plex Mono',monospace; letter-spacing:.02em; padding:0 3px; }
+    .kb-key:active, .kb-key.pressed { background:var(--sh-active);
+      border-color:var(--p-primary); color:var(--p-primary);
+      box-shadow:0 0 6px color-mix(in srgb, var(--p-primary) 40%, transparent); }
+    .kb-key.mod-active { background:color-mix(in srgb, var(--p-primary) 22%, #000);
+      border-color:var(--p-primary); color:var(--p-primary);
+      box-shadow:0 0 8px color-mix(in srgb, var(--p-primary) 55%, transparent); }
+    /* flex sizing helpers — default keys are flex:1, wider keys get explicit flex */
+    .kb-key { flex:1; }
+    .kb-key.w15 { flex:1.5; }
+    .kb-key.w175 { flex:1.75; }
+    .kb-key.w2 { flex:2; }
+    .kb-key.w225 { flex:2.25; }
+    .kb-key.w275 { flex:2.75; }
+    .kb-key.w-space { flex:6; }
+  </style>
+</head>
+<body class="bg-black text-zinc-100 h-screen overflow-hidden select-none">
+  <div class="app">
+    <!-- BAND: host-switcher · master health-light · [air] · link · clock · battery · reload · fullscreen -->
+    <div class="band">
+      <button id="host-switch" class="wordmark font-bold text-emerald-500">
+        <span id="host-name">—</span><span class="car">▼</span>
+      </button>
+      <div id="st-telemetry" class="telem">
+        <span id="st-gpu">GPU —</span>
+        <span id="st-cpu">CPU —</span>
+        <span id="st-aud">MIC —</span>
+      </div>
+      <div class="cluster">
+        <span id="st-conn" class="w-2 h-2 rounded-full bg-zinc-600" title="link"></span>
+        <span id="st-bat" class="text-zinc-400 tabular-nums hidden" title="phone battery"></span>
+        <span id="st-clock" class="text-zinc-300 tabular-nums" title="tap for cogitator">--:--</span>
+        <button id="reload-btn" class="btn-i" title="reload">⟳</button>
+        <button id="fs-btn" class="btn-i" title="fullscreen">⛶</button>
+      </div>
+    </div>
+
+    <div class="body">
+      <!-- CENTER: home (workspaces) by default; a summoned panel fills it -->
+      <div class="center">
+        <!-- HOME: workspace columns (renderWorkspaces -> #wsgrid) + a common context strip below -->
+        <div id="home" class="home">
+          <div class="wsgrid" id="wsgrid"></div>
+          <div class="ctx" id="ctx-home"></div>
+        </div>
+
+        <!-- Audio — mutes + now-playing + devices (volume/transport moved to the rail) -->
+        <section class="panel" id="panel-audio">
+          <div class="phead"><h2>Audio</h2></div>
+          <div class="grid gap-4 flex-1 min-h-0" style="grid-template-columns:30% minmax(0,1fr)">
+            <!-- left column: mutes + now-playing hero + a redundant copy of volume/transport (30%) -->
+            <div class="flex flex-col gap-3 min-h-0 min-w-0">
+              <div class="flex gap-2 shrink-0">
+                <button id="mic-btn" class="flex-1 bg-zinc-800 rounded-lg py-2" data-mute="mic">Mic</button>
+                <button id="spk-btn" class="flex-1 bg-zinc-800 rounded-lg py-2" data-mute="sink">Speaker</button>
+              </div>
+              <div class="bg-zinc-900 rounded-lg p-3 flex-1 min-h-0 flex flex-col items-center justify-center gap-3">
+                <img id="art" alt="" class="rounded object-cover bg-zinc-800 hidden" style="width:min(160px,32vh);height:min(160px,32vh)">
+                <div id="np-empty" class="flex items-center justify-center text-zinc-600 text-[10px] tracking-[.25em]"
+                  style="width:min(160px,32vh);height:min(160px,32vh);border:1px solid var(--p-outline);border-radius:6px">NO SIGNAL</div>
+                <div class="np-scroll-mask">
+                  <p id="now-playing" class="np-scroll-text">—</p>
+                </div>
+              </div>
+              <div class="shrink-0 flex flex-col gap-2">
+                <div class="seek-wrap" id="seek-wrap">
+                  <span class="seek-time" id="seek-elapsed">0:00</span>
+                  <input class="seek-slider" id="seek-slider" type="range" min="0" max="1000" value="0">
+                  <span class="seek-time" id="seek-total">0:00</span>
+                </div>
+                <div class="trans">
+                  <button class="media" data-media="previous" title="previous">◁◁</button>
+                  <button class="media pp-btn" data-media="play-pause" title="play/pause">❚❚</button>
+                  <button class="media" data-media="next" title="next">▷▷</button>
+                </div>
+              </div>
+            </div>
+            <!-- right column: device lists (70%); min-w-0 so long names ellipsis instead of clipping -->
+            <div class="flex flex-col gap-3 min-h-0 min-w-0 overflow-auto">
+              <div class="min-w-0">
+                <p class="text-xs uppercase tracking-wider text-zinc-500 mb-1">Output device</p>
+                <div id="sink-list" class="space-y-1"></div>
+              </div>
+              <div class="min-w-0">
+                <p class="text-xs uppercase tracking-wider text-zinc-500 mb-1">Input device</p>
+                <div id="source-list" class="space-y-1"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Stream — bidirectional audio + screen video + touch-on-video -->
+        <section class="panel" id="panel-stream">
+          <div class="phead"><h2>Stream</h2></div>
+          <div class="flex gap-3 items-stretch flex-1 min-h-0">
+            <div class="bg-zinc-900 rounded-lg p-4 space-y-3 w-72 shrink-0 overflow-auto">
+              <p class="text-xs uppercase tracking-wider text-zinc-500">Control</p>
+              <div class="flex items-center gap-2">
+                <span id="stream-dot" class="w-2.5 h-2.5 rounded-full bg-zinc-600"></span>
+                <span id="stream-status" class="text-sm text-zinc-400">Idle</span>
+              </div>
+              <div class="flex items-center justify-between text-sm border-b border-zinc-800 pb-2"><span class="text-zinc-400">Listen to PC</span><button id="stream-listen" class="tgl on"></button></div>
+              <div class="flex items-center justify-between text-sm border-b border-zinc-800 pb-2"><span class="text-zinc-400">Phone mic → PC</span><button id="stream-mic" class="tgl"></button></div>
+              <div class="flex items-center justify-between text-sm border-b border-zinc-800 pb-2"><span class="text-zinc-400">Phone-only output</span><button id="stream-phoneonly" class="tgl"></button></div>
+              <div class="flex items-center justify-between text-sm"><span class="text-zinc-400">Video (screen)</span><button id="stream-video" class="tgl"></button></div>
+              <div id="stream-monitor" class="seg"></div>
+              <div id="stream-quality" class="seg" data-value="medium">
+                <button type="button" class="segbtn" data-val="low">540p</button>
+                <button type="button" class="segbtn on" data-val="medium">720p</button>
+                <button type="button" class="segbtn" data-val="high">1080p</button>
+              </div>
+              <div class="flex gap-2">
+                <button id="stream-connect" class="flex-1 bg-emerald-600 rounded-lg py-3 font-medium">Connect</button>
+                <button id="stream-stop" class="flex-1 bg-zinc-800 rounded-lg py-3">Stop</button>
+              </div>
+              <button id="stream-capture" class="w-full bg-zinc-800 rounded-lg py-2 text-sm text-zinc-400">LOCK input → rig (mouse + keys)</button>
+              <p class="text-xs text-zinc-500">Mic shows up on the rig as input <b>“Monitor of PhoneDeckMic”</b> — select it in the app you want to use it in. Headphones recommended to avoid echo. Keep this screen foreground.</p>
+              <p class="text-xs text-zinc-600"><b>Lock input</b> (with video on): the cursor is captured and keystrokes go to the rig — a wireless kb+mouse+screen. <b>Esc</b> releases (so Esc can’t be sent while locked; use the on-screen Esc).</p>
+            </div>
+            <audio id="stream-audio" autoplay playsinline></audio>
+            <div class="flex-1 min-w-0 rounded-lg border border-zinc-800 bg-black relative flex items-center justify-center overflow-hidden">
+              <span class="text-zinc-600 tracking-[.35em] text-sm pointer-events-none">▛ STREAM ▟</span>
+              <video id="stream-video-el" autoplay playsinline muted class="absolute inset-0 w-full h-full object-contain hidden touch-none cursor-crosshair"></video>
+            </div>
+          </div>
+        </section>
+
+        <!-- Voice router -->
+        <section class="panel" id="panel-voice">
+          <div class="phead"><h2>Voice</h2></div>
+          <div class="grid grid-cols-[280px_1fr] gap-3 flex-1 min-h-0">
+            <div class="bg-zinc-900 rounded-lg p-4 space-y-3">
+              <p class="text-xs uppercase tracking-wider text-zinc-500">Microphone</p>
+              <div id="voice-mic" class="seg" data-value="desktop">
+                <button type="button" class="segbtn on" data-val="desktop">Desktop (rig)</button>
+                <button type="button" class="segbtn" data-val="device">Device (phone)</button>
+              </div>
+              <button id="voice-btn" class="w-full rounded-xl py-8 text-2xl font-semibold bg-emerald-700">▶ START</button>
+              <p class="text-xs text-zinc-500">Lane word first — <b class="text-zinc-300">macro</b> · <b class="text-zinc-300">type</b> · <b class="text-zinc-300">input</b> · <b class="text-zinc-300">friday</b>. Tap a result to run.</p>
+            </div>
+            <div class="bg-zinc-900 rounded-lg p-4 flex flex-col min-h-0">
+              <p class="text-xs uppercase tracking-wider text-zinc-500">Trace · Answers</p>
+              <div id="voice-log" class="space-y-2 mt-2 overflow-auto"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Modes / scenes -->
+        <section class="panel" id="panel-modes">
+          <div class="phead"><span class="back" data-p="more">‹ MORE</span><h2>Modes</h2></div>
+          <div class="bg-zinc-900 rounded-lg p-4 space-y-3 flex-1 min-h-0 overflow-auto">
+            <div id="mode-grid" class="grid grid-cols-2 gap-4"></div>
+            <pre id="mode-output" class="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs whitespace-pre-wrap overflow-auto max-h-64"></pre>
+          </div>
+        </section>
+
+        <!-- Remote input: swipeable trackpad ↔ full keyboard -->
+        <section class="panel" id="panel-remote">
+          <div class="phead">
+            <h2>Remote</h2>
+            <button id="btn-fullscreen" class="ml-auto bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1 rounded text-xs tracking-wider uppercase font-medium border border-zinc-700">Fullscreen</button>
+          </div>
+          <div class="remote-body">
+            <div class="remote-swiper" id="remote-swiper">
+              <div class="remote-track" id="remote-track">
+                <!-- PANE 0: Trackpad -->
+                <div class="remote-pane">
+                  <div class="remote-tp-area">
+                    <p class="text-xs uppercase tracking-wider text-zinc-500" style="flex:none">Trackpad</p>
+                    <div id="trackpad" class="flex-1 bg-zinc-900 rounded-xl flex items-center justify-center text-center text-zinc-600 text-xs px-4 touch-none">
+                      Trackpad — drag to move · tap = click · two-finger tap = right · two-finger drag = scroll
+                    </div>
+                    <div class="grid grid-cols-3 gap-2" style="flex:none">
+                      <button class="rbtn bg-zinc-800 rounded-lg py-3" data-click="left">Left</button>
+                      <button class="rbtn bg-zinc-800 rounded-lg py-3" data-click="middle">Middle</button>
+                      <button class="rbtn bg-zinc-800 rounded-lg py-3" data-click="right">Right</button>
+                    </div>
+                  </div>
+                </div>
+                <!-- PANE 1: Keyboard -->
+                <div class="remote-pane">
+                  <div class="remote-kb-area" id="kb-area">
+                    <p class="text-xs uppercase tracking-wider text-zinc-500" style="flex:none;">Keyboard</p>
+                    <div style="flex:1; display:flex; flex-direction:column;">
+                      <div style="flex:1; display:flex; align-items:center; overflow:hidden;">
+                        <div id="kb-typed-text" class="text-xs text-amber-400 font-mono overflow-x-hidden w-full text-center" style="white-space:pre; scrollbar-width:none;"></div>
+                      </div>
+                      <div style="flex:none; display:flex; flex-direction:column; gap:3px;">
+                        <!-- Number row -->
+                      <div class="kb-row">
+                        <button class="kb-key" data-special="esc">Esc</button>
+                        <button class="kb-key" data-char="`" data-shift="~">`</button>
+                        <button class="kb-key" data-char="1" data-shift="!">1</button>
+                        <button class="kb-key" data-char="2" data-shift="@">2</button>
+                        <button class="kb-key" data-char="3" data-shift="#">3</button>
+                        <button class="kb-key" data-char="4" data-shift="$">4</button>
+                        <button class="kb-key" data-char="5" data-shift="%">5</button>
+                        <button class="kb-key" data-char="6" data-shift="^">6</button>
+                        <button class="kb-key" data-char="7" data-shift="&amp;">7</button>
+                        <button class="kb-key" data-char="8" data-shift="*">8</button>
+                        <button class="kb-key" data-char="9" data-shift="(">9</button>
+                        <button class="kb-key" data-char="0" data-shift=")">0</button>
+                        <button class="kb-key" data-char="-" data-shift="_">-</button>
+                        <button class="kb-key" data-char="=" data-shift="+">=</button>
+                        <button class="kb-key w2" data-special="backspace">⌫</button>
+                      </div>
+                      <!-- QWERTY row -->
+                      <div class="kb-row">
+                        <button class="kb-key w15" data-special="tab">Tab</button>
+                        <button class="kb-key" data-char="q">q</button>
+                        <button class="kb-key" data-char="w">w</button>
+                        <button class="kb-key" data-char="e">e</button>
+                        <button class="kb-key" data-char="r">r</button>
+                        <button class="kb-key" data-char="t">t</button>
+                        <button class="kb-key" data-char="y">y</button>
+                        <button class="kb-key" data-char="u">u</button>
+                        <button class="kb-key" data-char="i">i</button>
+                        <button class="kb-key" data-char="o">o</button>
+                        <button class="kb-key" data-char="p">p</button>
+                        <button class="kb-key" data-char="[" data-shift="{">[</button>
+                        <button class="kb-key" data-char="]" data-shift="}">]</button>
+                        <button class="kb-key w15" data-char="\" data-shift="|">\</button>
+                      </div>
+                      <!-- Home row -->
+                      <div class="kb-row">
+                        <button class="kb-key w175" data-special="capslock" data-mod-toggle="caps">Caps</button>
+                        <button class="kb-key" data-char="a">a</button>
+                        <button class="kb-key" data-char="s">s</button>
+                        <button class="kb-key" data-char="d">d</button>
+                        <button class="kb-key" data-char="f">f</button>
+                        <button class="kb-key" data-char="g">g</button>
+                        <button class="kb-key" data-char="h">h</button>
+                        <button class="kb-key" data-char="j">j</button>
+                        <button class="kb-key" data-char="k">k</button>
+                        <button class="kb-key" data-char="l">l</button>
+                        <button class="kb-key" data-char=";" data-shift=":">;</button>
+                        <button class="kb-key" data-char="'" data-shift="&quot;">'</button>
+                        <button class="kb-key w225" data-special="enter">Enter</button>
+                      </div>
+                      <!-- Shift row -->
+                      <div class="kb-row">
+                        <button class="kb-key w225" data-modifier="shift">Shift</button>
+                        <button class="kb-key" data-char="z">z</button>
+                        <button class="kb-key" data-char="x">x</button>
+                        <button class="kb-key" data-char="c">c</button>
+                        <button class="kb-key" data-char="v">v</button>
+                        <button class="kb-key" data-char="b">b</button>
+                        <button class="kb-key" data-char="n">n</button>
+                        <button class="kb-key" data-char="m">m</button>
+                        <button class="kb-key" data-char="," data-shift="&lt;">,</button>
+                        <button class="kb-key" data-char="." data-shift="&gt;">.</button>
+                        <button class="kb-key" data-char="/" data-shift="?">/</button>
+                      </div>
+                      <!-- Bottom row -->
+                      <div class="kb-row">
+                        <button class="kb-key w15" data-modifier="ctrl">Ctrl</button>
+                        <button class="kb-key w15" data-modifier="super">Super</button>
+                        <button class="kb-key w15" data-modifier="alt">Alt</button>
+                        <button class="kb-key w-space" data-char=" "> </button>
+                        <button class="kb-key" data-special="left">←</button>
+                        <button class="kb-key" data-special="up">↑</button>
+                        <button class="kb-key" data-special="down">↓</button>
+                        <button class="kb-key" data-special="right">→</button>
+                      </div>
+                      </div>
+                      <div style="flex:1;"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- More — overhead launcher -->
+        <section class="panel" id="panel-more">
+          <div class="phead"><h2>More</h2><span class="sub">stowed utilities</span></div>
+          <div class="launch flex-1">
+            <div class="lbtn" data-sub="modes">Modes</div>
+            <div class="lbtn" data-sub="config">Config</div>
+            <div class="lbtn" data-sub="system">System</div>
+          </div>
+        </section>
+
+        <!-- Files: screenshot + drop + clipboard -->
+        <section class="panel min-w-0 max-w-full" id="panel-files">
+          <div class="phead"><h2>Files</h2></div>
+          <div class="flex flex-1 min-h-0 min-w-0 w-full overflow-x-auto overflow-y-hidden snap-x snap-mandatory pb-4 gap-4" style="scroll-behavior: smooth; -webkit-overflow-scrolling: touch;">
+            <!-- Pane 0: Screenshot -->
+            <div class="shrink-0 snap-center h-full" style="width: 60%;">
+              <div class="bg-zinc-900 rounded-lg p-4 space-y-3 h-full overflow-y-auto min-h-0">
+                <p class="text-xs uppercase tracking-wider text-zinc-500">Screenshot</p>
+                <div id="shot-monitor" class="seg"></div>
+                <button id="shot-grab" class="w-full bg-emerald-600 rounded-lg px-4 py-2 text-sm font-medium">Grab</button>
+                <a id="shot-dl" download class="hidden text-emerald-400 text-sm underline">Download PNG</a>
+                <div class="shot-area"><span id="shot-placeholder" class="text-zinc-600 text-xs">▚ no capture yet ▞</span><img id="shot-img" class="max-w-full rounded-lg hidden cursor-zoom-in" alt=""></div>
+              </div>
+            </div>
+            <!-- Pane 1: Send to PC -->
+            <div class="shrink-0 snap-center h-full" style="width: 40%;">
+              <div class="bg-zinc-900 rounded-lg p-4 space-y-3 h-full overflow-y-auto min-h-0">
+                <p class="text-xs uppercase tracking-wider text-zinc-500">Send file to PC</p>
+                <input id="up-file" type="file" class="text-sm w-full file:mr-3 file:rounded file:border-0 file:bg-zinc-800 file:px-3 file:py-1 file:text-zinc-200">
+                <button id="up-send" class="bg-emerald-600 rounded-lg px-4 py-2 text-sm font-medium">Send to PC</button>
+                <p id="up-status" class="text-xs text-zinc-500"></p>
+                <p class="text-xs text-zinc-600">Lands in <b>~/hyprhand</b> on the rig.</p>
+              </div>
+            </div>
+            <!-- Pane 2: Clipboard -->
+            <div class="shrink-0 snap-center h-full" style="width: 60%;">
+              <div class="bg-zinc-900 rounded-lg p-4 space-y-3 h-full overflow-y-auto min-h-0">
+                <p class="text-xs uppercase tracking-wider text-zinc-500">Clipboard</p>
+                <button id="clip-recv" class="w-full bg-emerald-600 rounded-lg px-4 py-2 text-sm font-medium">Receive from PC</button>
+                <div id="clip-content" class="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs leading-relaxed max-h-48 overflow-auto whitespace-pre-wrap text-zinc-400" style="min-height:60px">— click receive to fetch rig clipboard —</div>
+                <button id="clip-copy" class="w-full bg-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-300" title="Copy displayed text to phone clipboard">Copy to phone</button>
+                <div class="border-t border-zinc-800 pt-3 space-y-2">
+                  <p class="text-xs uppercase tracking-wider text-zinc-500">Send to PC</p>
+                  <textarea id="clip-text" rows="3" placeholder="Type or paste text here…"
+                    class="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs leading-relaxed focus:outline-none focus:border-emerald-600 resize-none"></textarea>
+                  <button id="clip-send" class="w-full bg-emerald-600 rounded-lg px-4 py-2 text-sm font-medium">Send to PC</button>
+                </div>
+                <p id="clip-status" class="text-xs text-zinc-500"></p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Config editor -->
+        <section class="panel" id="panel-config">
+          <div class="phead"><span class="back" data-p="more">‹ MORE</span><h2>Config</h2></div>
+          <div class="flex flex-col gap-2 flex-1 min-h-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <button class="cfg-pick bg-zinc-800 rounded px-3 py-1 text-sm" data-cfg="commands">commands.json</button>
+              <button class="cfg-pick bg-zinc-800 rounded px-3 py-1 text-sm" data-cfg="modes">modes.json</button>
+              <button class="cfg-pick bg-zinc-800 rounded px-3 py-1 text-sm" data-cfg="context">context.json</button>
+              <button class="cfg-pick bg-zinc-800 rounded px-3 py-1 text-sm" data-cfg="voice">voice.json</button>
+              <button class="cfg-pick bg-zinc-800 rounded px-3 py-1 text-sm" data-cfg="fleet">fleet.json</button>
+              <span id="cfg-status" class="text-xs flex-1"></span>
+              <button id="cfg-save" class="bg-emerald-600 rounded px-4 py-1 text-sm font-medium">Save</button>
+            </div>
+            <textarea id="cfg-text" spellcheck="false" autocapitalize="off" autocomplete="off"
+              class="w-full flex-1 min-h-0 bg-zinc-950 border border-zinc-800 rounded-lg p-3 font-mono text-xs leading-relaxed focus:outline-none focus:border-emerald-600"></textarea>
+          </div>
+        </section>
+
+        <!-- System — action half (monitoring dissolved into the band light + cogitator) -->
+        <section class="panel" id="panel-system">
+          <div class="phead"><span class="back" data-p="more">‹ MORE</span><h2>System</h2></div>
+          <div class="grid grid-cols-2 gap-4 flex-1 min-h-0 overflow-auto">
+            <div class="space-y-3">
+              <div id="ts-status" class="bg-zinc-900 rounded-lg p-3 text-sm text-zinc-400">Tailscale —</div>
+              <div class="bg-zinc-900 rounded-lg p-3 space-y-2 text-sm">
+                <span class="text-zinc-400">Theme</span>
+                <div id="theme-profile" class="seg">
+                  <button type="button" class="segbtn" data-val="green">Green</button>
+                  <button type="button" class="segbtn" data-val="amber">Amber</button>
+                  <button type="button" class="segbtn" data-val="ice">Ice</button>
+                  <button type="button" class="segbtn" data-val="auto">Auto</button>
+                </div>
+              </div>
+              <div class="bg-zinc-900 rounded-lg p-3 space-y-2 text-sm">
+                <span class="text-zinc-400">Ambient — idle after</span>
+                <div class="flex items-center gap-3">
+                  <div id="amb-idle" class="seg flex-1">
+                    <button type="button" class="segbtn" data-val="1">1m</button>
+                    <button type="button" class="segbtn" data-val="2">2m</button>
+                    <button type="button" class="segbtn" data-val="5">5m</button>
+                    <button type="button" class="segbtn" data-val="10">10m</button>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <span class="text-zinc-500 text-xs">LITURGY</span>
+                    <button id="amb-lit" class="tgl"></button>
+                  </div>
+                </div>
+              </div>
+              <p id="sys-result" class="text-xs text-zinc-500"></p>
+            </div>
+            <div>
+              <p class="text-xs uppercase tracking-wider text-zinc-500 mb-1">Top processes (by memory)</p>
+              <div id="proc-list" class="space-y-1 text-sm"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- RAIL: volume · transport · dock -->
+      <div class="rail">
+        <div class="vol">
+          <span class="m" data-mute="sink" title="mute speaker">◼</span>
+          <input class="vol-slider" type="range" min="0" max="150" value="0">
+          <span class="vpct vol-val">—</span>
+        </div>
+        <div class="trans">
+          <button class="media" data-media="previous" title="previous">◁◁</button>
+          <button class="media pp-btn" data-media="play-pause" title="play/pause">❚❚</button>
+          <button class="media" data-media="next" title="next">▷▷</button>
+        </div>
+        <div class="rule"></div>
+        <div class="dock">
+          <div class="drow" data-p="audio"><span class="t">›</span> Audio</div>
+          <div class="drow" data-p="stream"><span class="t">›</span> Stream</div>
+          <div class="drow" data-p="voice"><span class="t">›</span> Voice</div>
+          <div class="drow" data-p="files"><span class="t">›</span> Files</div>
+          <div class="drow" data-p="remote"><span class="t">›</span> Remote</div>
+          <div class="drow more" data-p="more"><span class="t">›</span> More …</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- host-switcher menu: body-level + fixed + high z so no ancestor stacking or overflow can bury or clip it -->
+  <div id="host-menu" class="hidden fixed z-[60] bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl py-1 min-w-[11rem]"></div>
+
+  <!-- Ambient Cogitator: enters after idle, exits on any touch (back to exact surface) -->
+  <div id="cog" class="hidden">
+    <div id="cog-drift">
+      <div id="cog-left">
+        <div id="cog-clock">--<span class="cln">:</span>--</div>
+        <div id="cog-date">—</div>
+        <div id="cog-uptime">—</div>
+        <div id="cog-socket-outposts" class="cog-socket">· V3 · OUTPOSTS ·</div>
+      </div>
+      <div id="cog-stack"><canvas id="cog-cv"></canvas></div>
+      <div id="cog-np">
+        <div id="cog-artwrap" class="hidden"><img id="cog-art" alt=""></div>
+        <div id="cog-np-main">
+          <div id="cog-np-status">— NO SIGNAL —</div>
+          <div id="cog-np-title"></div>
+        </div>
+        <div id="cog-socket-wave" class="cog-socket"><canvas id="cog-wave-cv"></canvas></div>
+      </div>
+      <div id="cog-liturgy">++ cogitator vigil unbroken ++</div>
+    </div>
+  </div>
+  <!-- Image Popup Modal -->
+  <div id="img-modal" class="hidden fixed inset-0 z-[100] bg-black flex items-center justify-center p-4 cursor-zoom-out">
+    <img id="img-modal-content" class="max-w-full max-h-full rounded-lg object-contain" alt="Fullscreen screenshot">
+  </div>
+  <script src="/static/app.js?v=43"></script>
+</body>
+</html>

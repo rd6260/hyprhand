@@ -3,11 +3,15 @@
 // Also bridges the Android share-target: the OS POST /share arrives without
 // the SameSite=Strict cookie, so we intercept and re-POST to /share/api
 // (same-origin, cookie attaches) then return a confirmation page.
-const CACHE = "hyprhand-v1";
-const SHELL = ["/app.js", "/manifest.webmanifest"];
+const CACHE = "hyprhand-v2";
+const SHELL = ["/static/app.js", "/static/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => Promise.allSettled(SHELL.map((u) => c.add(u))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", (e) => {
@@ -26,12 +30,16 @@ self.addEventListener("fetch", (e) => {
   }
   if (url.pathname.startsWith("/ws") || e.request.method !== "GET") return;
   if (e.request.mode === "navigate") return;
+  // Only cache static assets; never API responses (clipboard, screenshots, config...).
+  if (!url.pathname.startsWith("/static/")) return;
   e.respondWith(
     fetch(e.request).then((r) => {
-      const copy = r.clone();
-      caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+      if (r.ok) {
+        const copy = r.clone();
+        caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+      }
       return r;
-    }).catch(() => caches.match(e.request))
+    }).catch(async () => (await caches.match(e.request)) || Response.error())
   );
 });
 

@@ -28,7 +28,7 @@ fn cpu_info() -> CpuInfo {
     sys.refresh_cpu_usage();
     sys.refresh_memory();
 
-    let util = sys.global_cpu_usage();
+    let util = sys.global_cpu_info().cpu_usage();
 
     // CPU temp: try reading from hwmon (linux sysfs).
     let temp = read_cpu_temp();

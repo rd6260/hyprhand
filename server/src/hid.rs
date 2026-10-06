@@ -23,11 +23,9 @@ fn device() -> &'static Mutex<Option<VirtualDevice>> {
 
 fn create_device() -> Option<VirtualDevice> {
     let mut keys = AttributeSet::<Key>::new();
-    // All standard keys
+    // All standard keys (evdev Key is a newtype wrapping u16, constructed via Key::new)
     for k in 0u16..256 {
-        if let Ok(key) = Key::try_from(k) {
-            keys.insert(key);
-        }
+        keys.insert(Key::new(k));
     }
     // Mouse buttons
     keys.insert(Key::BTN_LEFT);
@@ -40,12 +38,12 @@ fn create_device() -> Option<VirtualDevice> {
     axes.insert(RelativeAxisType::REL_WHEEL);
     axes.insert(RelativeAxisType::REL_HWHEEL);
 
-    match VirtualDeviceBuilder::new()
-        .name("hyprhand-input")
-        .with_keys(&keys)
+    let result = VirtualDeviceBuilder::new()
+        .and_then(|b| b.name("hyprhand-input").with_keys(&keys))
         .and_then(|b| b.with_relative_axes(&axes))
-        .and_then(|b| b.build())
-    {
+        .and_then(|b| b.build());
+
+    match result {
         Ok(dev) => {
             tracing::info!("Created virtual HID device (hyprhand-input)");
             Some(dev)
@@ -71,7 +69,7 @@ fn emit(events: &[InputEvent]) -> anyhow::Result<()> {
 }
 
 fn syn() -> InputEvent {
-    InputEvent::new(EventType::SYNCHRONIZE, 0, 0)
+    InputEvent::new(EventType::SYNCHRONIZATION, 0, 0)
 }
 
 fn key_ev(key: Key, down: bool) -> InputEvent {

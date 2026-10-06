@@ -23,16 +23,16 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use axum::{
-    body::Body,
-    extract::{Multipart, Path, Query, State},
-    http::StatusCode,
-    response::{Html, IntoResponse, Json, Response},
+    extract::{Multipart, Path, Query, Request, State},
+    http::{header, StatusCode},
+    middleware::Next,
+    response::{Html, IntoResponse, Json, Redirect, Response},
     routing::{get, post},
     Router,
 };
 use axum_extra::extract::CookieJar;
 use clap::{Parser, Subcommand};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::net::TcpListener;
 use tracing::info;
 
@@ -100,17 +100,31 @@ async fn main() -> anyhow::Result<()> {
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
+async fn redirect_on_unauth(req: Request, next: Next) -> Response {
+    let wants_html = req
+        .headers()
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|a| a.contains("text/html"))
+        .unwrap_or(false);
+    let res = next.run(req).await;
+    if wants_html && res.status() == StatusCode::UNAUTHORIZED {
+        return Redirect::to("/login").into_response();
+    }
+    res
+}
+
 fn build_router(state: Arc<AppState>) -> Router {
     // Public routes — no auth
     let public = Router::new()
         .route("/login", get(login_page).post(login_handler))
         .route("/sw.js", get(assets::serve_sw))
         .route("/share", get(share_get).post(share_fallback))
-        .route("/", get(assets::serve_index))
-        .route("/static/{*path}", get(assets::serve_static));
+        .route("/static/*path", get(assets::serve_static));
 
     // Protected routes — auth middleware applied
     let protected = Router::new()
+        .route("/", get(assets::serve_index))
         // WebSocket
         .route("/ws", get(ws::ws_state))
         .route("/ws/input", get(ws::ws_input))
@@ -163,7 +177,9 @@ fn build_router(state: Arc<AppState>) -> Router {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,
-        ));
+        ))
+        .layer(axum::middleware::from_fn(redirect_on_unauth));
+
 
     Router::new()
         .merge(public)

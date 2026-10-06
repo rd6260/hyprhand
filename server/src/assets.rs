@@ -8,7 +8,7 @@
 
 use axum::{
     body::Body,
-    http::{header, HeaderValue, Response, StatusCode},
+    http::{header, Response, StatusCode},
     response::IntoResponse,
 };
 use mime_guess::from_path;
