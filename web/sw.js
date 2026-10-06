@@ -3,8 +3,8 @@
 // Also bridges the Android share-target: the OS POST /share arrives without
 // the SameSite=Strict cookie, so we intercept and re-POST to /share/api
 // (same-origin, cookie attaches) then return a confirmation page.
-const CACHE = "hyprhand-v2";
-const SHELL = ["/static/app.js", "/static/manifest.webmanifest"];
+const CACHE = "hyprhand-v2.1";
+const SHELL = ["/static/app.js"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
