@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>hyprhand · login</title>
+  <link rel="stylesheet" href="/theme.css">
+  <style>
+    body { margin:0; height:100vh; display:flex; align-items:center; justify-content:center;
+           background:#000; font-family:'IBM Plex Mono',monospace; }
+    form { display:flex; flex-direction:column; gap:14px; width:min(320px,90vw); }
+    h1 { color:var(--p-primary,#33ffa0); font-size:1.1rem; letter-spacing:.3em; text-align:center;
+         margin:0 0 8px; text-shadow:0 0 12px currentColor; }
+    input[type=password] { padding:12px 14px; background:#0a0f0c; color:#e4f7ed;
+      border:1px solid rgba(51,255,160,.25); border-radius:6px; font:inherit; font-size:1rem; outline:none; }
+    input[type=password]:focus { border-color:var(--p-primary,#33ffa0);
+      box-shadow:0 0 8px color-mix(in srgb,var(--p-primary,#33ffa0) 35%,transparent); }
+    button { padding:12px; background:rgba(51,255,160,.15); color:var(--p-primary,#33ffa0);
+      border:1px solid var(--p-primary,#33ffa0); border-radius:6px; cursor:pointer;
+      font:inherit; font-size:.9rem; letter-spacing:.15em; transition:background .15s, box-shadow .15s; }
+    button:hover { background:rgba(51,255,160,.28);
+      box-shadow:0 0 12px color-mix(in srgb,var(--p-primary,#33ffa0) 45%,transparent); }
+    #err  { color:#ff5252; font-size:.8rem; text-align:center; min-height:1.2em; }
+    #lock { color:#ffb000; font-size:.8rem; text-align:center; min-height:1.2em; }
+  </style>
+</head>
+<body>
+  <form id="lf">
+    <h1>HYPRHAND</h1>
+    <input id="pin" type="password" placeholder="PIN" autocomplete="current-password" autofocus>
+    <button type="submit">AUTHENTICATE</button>
+    <div id="err"></div>
+    <div id="lock"></div>
+  </form>
+  <script>
+    document.getElementById('lf').onsubmit = async (e) => {
+      e.preventDefault();
+      const pin = document.getElementById('pin').value;
+      const err = document.getElementById('err');
+      const lock = document.getElementById('lock');
+      err.textContent = ''; lock.textContent = '';
+      try {
+        const r = await fetch('/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && j.ok) { location.href = '/'; return; }
+        if (r.status === 429) { lock.textContent = j.error || 'too many attempts'; return; }
+        err.textContent = j.error || 'invalid PIN';
+      } catch { err.textContent = 'connection error'; }
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2021"
+default-run = "hyprhand"
+
+[[bin]]
+name = "hyprhand"
+path = "src/main.rs"
+
+[dependencies]
+# Workspace
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+protocol = { workspace = true }
+
+# HTTP + WebSocket
+axum = { version = "0.7", features = ["ws", "multipart", "macros"] }
+axum-extra = { version = "0.9", features = ["cookie"] }
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+futures-util = "0.3"
+
+# Serialisation / config
+dirs = "5"
+arc-swap = "1"
+
+# Auth
+argon2 = "0.5"
+jsonwebtoken = "9"
+rand = { version = "0.8", features = ["std"] }
+
+# Embedded assets
+rust-embed = { version = "8", features = ["debug-embed"] }
+mime_guess = "2"
+
+# Sysinfo
+sysinfo = "0.30"
+
+# Virtual input (evdev/uinput)
+evdev = "0.12"
+
+# CLI args
+clap = { version = "4", features = ["derive"] }
+
+# System calls (kill)
+libc = "0.2"
