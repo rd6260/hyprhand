@@ -582,7 +582,7 @@ function sendInput(o) {
     // ── CapsLock toggle ──
     if (key.dataset.modToggle === "caps") {
       capsLock = !capsLock;
-      sendInput({ t: "key", name: "capslock" });
+      sendInput({ t: "combo", keys: ["capslock"] });
       updateModUI();
       updateKeyLabels();
       clearMods(); // clear shift etc after capslock
@@ -596,7 +596,7 @@ function sendInput(o) {
       if (am.length > 0) {
         sendInput({ t: "combo", keys: [...am, special] });
       } else {
-        sendInput({ t: "key", name: special });
+        sendInput({ t: "combo", keys: [special] });
       }
       updateTypedText(special, true);
       clearMods();
@@ -622,7 +622,7 @@ function sendInput(o) {
         // combo sends the raw key, server handles the mapping
         sendInput({ t: "combo", keys: [...nonShiftMods, toSend] });
       } else {
-        sendInput({ t: "text", s: toSend });
+        sendInput({ t: "text", text: toSend });
       }
       updateTypedText(toSend, false);
       clearMods();
@@ -831,9 +831,9 @@ async function streamConnect() {
       if (ev.shiftKey) mods.push("shift");
       if (base) sendInput({ t: "combo", keys: [...mods, base] });
     } else if (SPECIAL[k]) {                            // named key (+ optional shift)
-      sendInput({ t: "key", name: SPECIAL[k], mods: ev.shiftKey ? ["shift"] : [] });
+      sendInput({ t: "combo", keys: [...(ev.shiftKey ? ["shift"] : []), SPECIAL[k]] });
     } else if (k.length === 1) {                        // printable -> text (handles case)
-      sendInput({ t: "text", s: k });
+      sendInput({ t: "text", text: k });
     }
   });
 })();

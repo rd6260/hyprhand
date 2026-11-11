@@ -122,7 +122,16 @@ pub fn key_event(key_name: &str, down: bool) -> anyhow::Result<()> {
 pub fn key_combo(keys: &[String]) -> anyhow::Result<()> {
     let mut resolved: Vec<Key> = vec![];
     for k in keys {
-        resolved.push(name_to_key(k).ok_or_else(|| anyhow::anyhow!("unknown key: {k}"))?);
+        let key = name_to_key(k)
+            .or_else(|| {
+                let mut c = k.chars();
+                match (c.next(), c.next()) {
+                    (Some(ch), None) => char_to_key(ch).map(|(key, _)| key),
+                    _ => None,
+                }
+            })
+            .ok_or_else(|| anyhow::anyhow!("unknown key: {k}"))?;
+        resolved.push(key);
     }
     let mut events: Vec<InputEvent> = resolved.iter().map(|&k| key_ev(k, true)).collect();
     events.push(syn());
@@ -175,6 +184,7 @@ fn name_to_key(name: &str) -> Option<Key> {
         "pageup" => Some(Key::KEY_PAGEUP),
         "pagedown" => Some(Key::KEY_PAGEDOWN),
         "space" => Some(Key::KEY_SPACE),
+        "capslock" | "caps" => Some(Key::KEY_CAPSLOCK),
         "f1" => Some(Key::KEY_F1),
         "f2" => Some(Key::KEY_F2),
         "f3" => Some(Key::KEY_F3),
