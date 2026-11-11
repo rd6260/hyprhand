@@ -109,7 +109,7 @@ function openPanel(pn) {
   if (pn === "modes") loadModes();
   else if (pn === "commands") loadCommands();
   else if (pn === "stream") populateMonitors();
-  else if (pn === "files") populateShotMonitors();
+  else if (pn === "files") { populateShotMonitors(); loadShotCameras(); }
   else if (pn === "config") loadConfig(cfgCurrent);
 }
 document.querySelectorAll(".drow").forEach((r) => (r.onclick = () => openPanel(r.dataset.p)));
@@ -146,18 +146,35 @@ function segRender(el, items) {         // rebuild options; keep current value i
 }
 
 // ---- files: screenshot + drop ----
+// sources = monitors (from live state) + cameras (fetched from /cameras, value "cam:<node>")
+let shotCameras = [], shotMonSig = "";
 function populateShotMonitors() {
   const mons = (lastState.hypr && lastState.hypr.monitors) || [];
-  segRender(document.getElementById("shot-monitor"), mons.map((m) => ({ val: m.name, label: m.name })));
+  shotMonSig = mons.map((m) => m.name).join(",");
+  const escH = (x) => String(x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  segRender(document.getElementById("shot-monitor"), [
+    ...mons.map((m) => ({ val: m.name, label: m.name })),
+    ...shotCameras.map((c) => ({ val: `cam:${escH(c.node)}`, label: escH(c.name) })),
+  ]);
+}
+async function loadShotCameras() {
+  try {
+    const r = await fetch("/cameras");
+    if (r.ok) shotCameras = await r.json();
+  } catch (_) { shotCameras = []; }
+  populateShotMonitors();
 }
 (function initFiles() {
   const grab = document.getElementById("shot-grab");
   if (!grab) return;
   segInit(document.getElementById("shot-monitor"));
   grab.onclick = async () => {
-    const mon = segValue("shot-monitor");
+    const src = segValue("shot-monitor") || "";
+    const isCam = src.startsWith("cam:");
+    const mon = isCam ? src.slice(4) : src;
     grab.classList.add("opacity-50");
-    const r = await fetch(`/screenshot?monitor=${encodeURIComponent(mon)}`);
+    const q = isCam ? `camera=${encodeURIComponent(mon)}` : `monitor=${encodeURIComponent(mon)}`;
+    const r = await fetch(`/screenshot?${q}`);
     grab.classList.remove("opacity-50");
     if (r.status === 401) { location.href = "/login"; return; }
     if (!r.ok) { document.getElementById("up-status"); return; }
@@ -530,7 +547,8 @@ function sendInput(o) {
       const y = (a[0].y + a[1].y) / 2;
       if (scrollY != null) {
         const d = y - scrollY;
-        if (Math.abs(d) > 3) { sendInput({ t: "scroll", dy: d < 0 ? 1 : -1 }); scrollY = y; }
+        // natural scrolling: content follows the fingers (swipe up -> scroll down)
+        if (Math.abs(d) > 3) { sendInput({ t: "scroll", dy: d < 0 ? -1 : 1 }); scrollY = y; }
       }
       return;
     }
@@ -747,11 +765,11 @@ function sendInput(o) {
         // number/symbol row: shifted symbol
         toSend = key.dataset.shift;
       }
-      // If non-shift modifiers are active, send as combo
+      // If non-shift modifiers are active, send as combo: all held mods (incl. shift)
+      // + the unshifted base key, so ctrl+shift+o arrives as ctrl+shift+o, not ctrl+o.
       const nonShiftMods = am.filter((m) => m !== "shift");
       if (nonShiftMods.length > 0) {
-        // combo sends the raw key, server handles the mapping
-        sendInput({ t: "combo", keys: [...nonShiftMods, toSend] });
+        sendInput({ t: "combo", keys: [...am, ch] });
       } else {
         sendInput({ t: "text", text: toSend });
       }
@@ -1336,6 +1354,11 @@ function render(s) {
   renderAudio(s);
   renderSystem(s);
   cogFeed(s);
+  // monitors may arrive after the Files tab was opened — keep its source list in sync
+  if (activePanel === "files") {
+    const sig = ((s.hypr && s.hypr.monitors) || []).map((m) => m.name).join(",");
+    if (sig !== shotMonSig) populateShotMonitors();
+  }
 }
 
 async function authOk() {

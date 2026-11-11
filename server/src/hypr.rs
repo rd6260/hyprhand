@@ -336,6 +336,11 @@ pub async fn watch_events(state: Arc<AppState>) {
         match UnixStream::connect(&path).await {
             Ok(stream) => {
                 tracing::info!("connected to Hyprland event socket at {path}");
+                // Publish the current monitors/windows right away. Otherwise they stay
+                // empty after a (re)start until the next Hyprland event happens to fire.
+                let mut s = state.current_state().as_ref().clone();
+                s.hypr = snapshot().await;
+                state.publish(s);
                 let mut lines = BufReader::new(stream).lines();
                 loop {
                     match lines.next_line().await {

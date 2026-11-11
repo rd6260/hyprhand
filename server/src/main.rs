@@ -165,6 +165,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/sys/kill", post(sys_kill))
         // Files
         .route("/screenshot", get(screenshot_handler))
+        .route("/cameras", get(cameras_handler))
         .route("/upload", post(upload_handler))
         // Clipboard
         .route("/clipboard", get(clipboard_read).post(clipboard_write))
@@ -527,15 +528,27 @@ async fn sys_kill(State(_): State<Arc<AppState>>, Json(b): Json<KillBody>) -> im
 // ── Files ─────────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct ScreenshotQuery { monitor: Option<String> }
+struct ScreenshotQuery { monitor: Option<String>, camera: Option<String> }
 async fn screenshot_handler(
     State(_): State<Arc<AppState>>,
     Query(q): Query<ScreenshotQuery>,
 ) -> Response {
-    match grab::screenshot(q.monitor.as_deref().unwrap_or("")).await {
+    let shot = match q.camera.as_deref() {
+        Some(cam) => grab::camera_snapshot(cam).await,
+        None => grab::screenshot(q.monitor.as_deref().unwrap_or("")).await,
+    };
+    match shot {
         Some(data) => ([("Content-Type", "image/png")], data).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+async fn cameras_handler(State(_): State<Arc<AppState>>) -> impl IntoResponse {
+    let list: Vec<_> = grab::cameras()
+        .into_iter()
+        .map(|(node, name)| serde_json::json!({ "node": node, "name": name }))
+        .collect();
+    Json(list)
 }
 
 async fn upload_handler(State(_): State<Arc<AppState>>, mut multipart: Multipart) -> impl IntoResponse {

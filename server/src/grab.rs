@@ -22,6 +22,54 @@ pub async fn screenshot(monitor: &str) -> Option<Vec<u8>> {
     }
 }
 
+// ── Cameras (V4L2) ────────────────────────────────────────────────────────────
+
+/// Video-capture nodes from sysfs as `(node, name)`, e.g. `("video0", "USB2.0 HD UVC WebCam")`.
+/// UVC cams expose a second metadata node per camera; only `index == 0` is the capture node.
+pub fn cameras() -> Vec<(String, String)> {
+    let Ok(rd) = std::fs::read_dir("/sys/class/video4linux") else { return vec![] };
+    let mut cams: Vec<(String, String)> = rd
+        .flatten()
+        .filter_map(|e| {
+            let node = e.file_name().to_str()?.to_string();
+            if !node.starts_with("video") { return None; }
+            let p = e.path();
+            let index = std::fs::read_to_string(p.join("index")).unwrap_or_default();
+            if index.trim() != "0" { return None; }
+            let name = std::fs::read_to_string(p.join("name")).unwrap_or_default();
+            // UVC names often repeat themselves ("Cam: Cam") — keep the first half
+            let name = name.trim().split(": ").next().unwrap_or("").trim().to_string();
+            Some((node.clone(), if name.is_empty() { node } else { name }))
+        })
+        .collect();
+    cams.sort_by(|a, b| a.0.cmp(&b.0));
+    cams
+}
+
+/// Grab one PNG frame from a camera node (e.g. "video0") via ffmpeg.
+pub async fn camera_snapshot(node: &str) -> Option<Vec<u8>> {
+    // only accept nodes we actually listed — never pass arbitrary paths to ffmpeg
+    if !cameras().iter().any(|(n, _)| n == node) { return None; }
+    let dev = format!("/dev/{node}");
+    let fut = tokio::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner", "-loglevel", "error",
+            "-f", "v4l2", "-i", &dev,
+            // skip the first frames so auto-exposure / white balance can settle
+            "-vf", "select=gte(n\\,10)", "-frames:v", "1",
+            "-f", "image2pipe", "-c:v", "png", "-",
+        ])
+        .kill_on_drop(true)
+        .output();
+    let out = tokio::time::timeout(std::time::Duration::from_secs(10), fut).await.ok()?.ok()?;
+    if out.status.success() && out.stdout.starts_with(b"\x89PNG") {
+        Some(out.stdout)
+    } else {
+        tracing::warn!("camera snapshot {dev} failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+        None
+    }
+}
+
 pub fn save_upload(filename: &str, data: &[u8]) -> Value {
     let name = Path::new(filename)
         .file_name()

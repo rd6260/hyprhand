@@ -121,17 +121,26 @@ pub fn key_event(key_name: &str, down: bool) -> anyhow::Result<()> {
 
 pub fn key_combo(keys: &[String]) -> anyhow::Result<()> {
     let mut resolved: Vec<Key> = vec![];
+    let mut needs_shift = false;
     for k in keys {
-        let key = name_to_key(k)
-            .or_else(|| {
-                let mut c = k.chars();
-                match (c.next(), c.next()) {
-                    (Some(ch), None) => char_to_key(ch).map(|(key, _)| key),
-                    _ => None,
-                }
-            })
-            .ok_or_else(|| anyhow::anyhow!("unknown key: {k}"))?;
+        // Single printable chars go through the US-layout map so shifted chars
+        // ("O", "!", ...) imply shift instead of silently losing it.
+        let mut c = k.chars();
+        let key = match (c.next(), c.next()) {
+            (Some(ch), None) => char_to_key(ch).map(|(key, shift)| {
+                needs_shift |= shift;
+                key
+            }),
+            _ => None,
+        }
+        .or_else(|| name_to_key(k))
+        .ok_or_else(|| anyhow::anyhow!("unknown key: {k}"))?;
         resolved.push(key);
+    }
+    if needs_shift && !resolved.contains(&Key::KEY_LEFTSHIFT) {
+        // press shift alongside the other modifiers (before the final key)
+        let at = resolved.len().saturating_sub(1);
+        resolved.insert(at, Key::KEY_LEFTSHIFT);
     }
     let mut events: Vec<InputEvent> = resolved.iter().map(|&k| key_ev(k, true)).collect();
     events.push(syn());
