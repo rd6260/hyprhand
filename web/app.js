@@ -107,6 +107,7 @@ function openPanel(pn) {
   const panel = document.getElementById("panel-" + pn);
   if (panel) panel.classList.add("show");
   if (pn === "modes") loadModes();
+  else if (pn === "commands") loadCommands();
   else if (pn === "stream") populateMonitors();
   else if (pn === "files") populateShotMonitors();
   else if (pn === "config") loadConfig(cfgCurrent);
@@ -349,8 +350,138 @@ document.querySelectorAll("[data-sys]").forEach((b) => {
   if (b.dataset.sys === "lock") b.onclick = () => post("/sys/lock");
 });
 
-// Commands tab retired — the voice `macro` lane covers commands ("macro reload hyprland").
-// The /commands endpoints, commands.json, and Config-tab editing stay.
+// ---- commands: buttons that run shell commands on the rig + manage (CRUD) ----
+// Stored in hyprhand.json `commands: [{label, cmd}]`; ids are list indices, so every
+// mutation reloads the list from the server.
+let cmdList = [];
+let cmdManaging = false;
+const htmlEsc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function cmdStatus(text, cls = "text-zinc-400") {
+  const el = document.getElementById("cmd-status");
+  el.textContent = text;
+  el.className = `sub flex-1 truncate ${cls}`;
+}
+
+async function loadCommands() {
+  const r = await fetch("/commands");
+  if (r.status === 401) { location.href = "/login"; return; }
+  cmdList = await r.json().catch(() => []);
+  renderCommands();
+}
+
+function renderCommands() {
+  const grid = document.getElementById("cmd-grid");
+  grid.innerHTML = cmdList.length
+    ? cmdList.map((c) =>
+        `<button class="cmd-btn bg-zinc-800 rounded-lg py-5 px-2 text-sm font-medium break-words" data-id="${c.id}" title="${htmlEsc(c.cmd)}">${htmlEsc(c.label)}</button>`).join("")
+    : '<p class="col-span-3 text-zinc-600 text-sm">No commands yet — tap <b>Manage</b> to add one.</p>';
+
+  const list = document.getElementById("cmd-list");
+  list.innerHTML = cmdList.map((c, i) => `
+    <div class="bg-zinc-900 rounded-lg p-2 flex items-center gap-2" data-id="${c.id}">
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-medium truncate">${htmlEsc(c.label)}</div>
+        <div class="text-xs text-zinc-500 font-mono truncate">${htmlEsc(c.cmd)}</div>
+      </div>
+      <button class="cmd-act bg-zinc-800 rounded px-2 py-1 text-xs" data-act="up" ${i === 0 ? "disabled style='opacity:.3'" : ""}>↑</button>
+      <button class="cmd-act bg-zinc-800 rounded px-2 py-1 text-xs" data-act="down" ${i === cmdList.length - 1 ? "disabled style='opacity:.3'" : ""}>↓</button>
+      <button class="cmd-act bg-zinc-800 rounded px-3 py-1 text-xs" data-act="edit">Edit</button>
+      <button class="cmd-act bg-red-900 rounded px-3 py-1 text-xs" data-act="del">Delete</button>
+    </div>`).join("");
+}
+
+function cmdResetForm() {
+  document.getElementById("cmd-id").value = "";
+  document.getElementById("cmd-label").value = "";
+  document.getElementById("cmd-cmd").value = "";
+  document.getElementById("cmd-submit").textContent = "Add";
+  document.getElementById("cmd-cancel").classList.add("hidden");
+  document.getElementById("cmd-form-status").textContent = "";
+}
+
+(function initCommands() {
+  const grid = document.getElementById("cmd-grid");
+  if (!grid) return;
+
+  // run
+  grid.addEventListener("click", async (ev) => {
+    const b = ev.target.closest(".cmd-btn");
+    if (!b || b.disabled) return;
+    const label = b.textContent;
+    b.disabled = true; b.classList.add("opacity-50");
+    cmdStatus(`running ${label}…`);
+    const res = await post("/commands/run", { id: Number(b.dataset.id) });
+    b.disabled = false; b.classList.remove("opacity-50");
+    if (res && res.ok) cmdStatus(`✓ ${label}${res.status === "started" ? " (started)" : ""}`, "text-emerald-400");
+    else cmdStatus(`✗ ${label}: ${(res && res.error) || "failed"}`, "text-red-400");
+  });
+
+  // manage toggle
+  document.getElementById("cmd-manage").onclick = () => {
+    cmdManaging = !cmdManaging;
+    document.getElementById("cmd-run").classList.toggle("hidden", cmdManaging);
+    document.getElementById("cmd-admin").classList.toggle("hidden", !cmdManaging);
+    document.getElementById("cmd-manage").textContent = cmdManaging ? "Done" : "Manage";
+    document.getElementById("cmd-manage").classList.toggle("bg-emerald-700", cmdManaging);
+    cmdResetForm();
+    cmdStatus("");
+  };
+
+  // create / update
+  document.getElementById("cmd-form").onsubmit = async (ev) => {
+    ev.preventDefault();
+    const st = document.getElementById("cmd-form-status");
+    const idv = document.getElementById("cmd-id").value;
+    const body = {
+      label: document.getElementById("cmd-label").value,
+      cmd: document.getElementById("cmd-cmd").value,
+    };
+    if (idv !== "") body.id = Number(idv);
+    st.textContent = "saving…"; st.className = "text-xs flex-1 text-zinc-400";
+    const res = await post("/commands/save", body);
+    if (res && res.ok) {
+      cmdResetForm();
+      await loadCommands();
+      st.textContent = "✓ saved"; st.className = "text-xs flex-1 text-emerald-400";
+    } else {
+      st.textContent = `✗ ${(res && res.error) || "failed"}`; st.className = "text-xs flex-1 text-red-400";
+    }
+  };
+  document.getElementById("cmd-cancel").onclick = cmdResetForm;
+
+  // edit / delete / reorder
+  document.getElementById("cmd-list").addEventListener("click", async (ev) => {
+    const b = ev.target.closest(".cmd-act");
+    if (!b || b.disabled) return;
+    const id = Number(b.closest("[data-id]").dataset.id);
+    const c = cmdList.find((x) => x.id === id);
+    if (!c) return;
+    const act = b.dataset.act;
+    if (act === "edit") {
+      document.getElementById("cmd-id").value = String(id);
+      document.getElementById("cmd-label").value = c.label;
+      document.getElementById("cmd-cmd").value = c.cmd;
+      document.getElementById("cmd-submit").textContent = "Save";
+      document.getElementById("cmd-cancel").classList.remove("hidden");
+      document.getElementById("cmd-form-status").textContent = `editing “${c.label}”`;
+      document.getElementById("cmd-label").focus();
+      return;
+    }
+    let res;
+    if (act === "del") {
+      if (!confirm(`Delete “${c.label}”?`)) return;
+      res = await post("/commands/delete", { id });
+      if (document.getElementById("cmd-id").value !== "") cmdResetForm(); // ids shifted
+    } else {
+      res = await post("/commands/move", { id, dir: act === "up" ? -1 : 1 });
+      if (document.getElementById("cmd-id").value !== "") cmdResetForm();
+    }
+    if (!res || !res.ok) cmdStatus(`✗ ${(res && res.error) || "failed"}`, "text-red-400");
+    await loadCommands();
+  });
+})();
 
 // ---- remote input (keyboard + trackpad over a dedicated WS) ----
 let inputSock = null;

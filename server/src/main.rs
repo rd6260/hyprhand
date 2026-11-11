@@ -149,6 +149,9 @@ fn build_router(state: Arc<AppState>) -> Router {
         // Commands
         .route("/commands", get(commands_list))
         .route("/commands/run", post(commands_run))
+        .route("/commands/save", post(commands_save))
+        .route("/commands/delete", post(commands_delete))
+        .route("/commands/move", post(commands_move))
         // Context strip
         .route("/context", get(context_get))
         .route("/context/key", post(context_key))
@@ -351,28 +354,96 @@ async fn commands_list(State(st): State<Arc<AppState>>) -> impl IntoResponse {
         .commands
         .iter()
         .enumerate()
-        .map(|(i, c)| serde_json::json!({ "id": i, "label": c.label }))
+        .map(|(i, c)| serde_json::json!({ "id": i, "label": c.label, "cmd": c.cmd }))
         .collect();
     Json(list)
 }
 
 #[derive(Deserialize)]
 struct CmdRunBody { id: usize }
+/// Run a command via `sh -c`, detached into its own process group so GUI apps it
+/// launches survive a server restart. Waits briefly so quick commands can report
+/// their exit status; long-running ones (app launches) report "started".
 async fn commands_run(State(st): State<Arc<AppState>>, Json(b): Json<CmdRunBody>) -> impl IntoResponse {
-    let cfg = st.config.load();
-    if let Some(cmd) = cfg.commands.get(b.id) {
-        let cmd = cmd.cmd.clone();
-        tokio::spawn(async move {
-            let _ = tokio::process::Command::new("sh")
-                .arg("-c")
-                .arg(&cmd)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
-        });
-        Json(serde_json::json!({ "ok": true }))
-    } else {
-        Json(serde_json::json!({ "ok": false, "error": "unknown command" }))
+    let Some(cmd) = st.config.load().commands.get(b.id).map(|c| c.cmd.clone()) else {
+        return Json(serde_json::json!({ "ok": false, "error": "unknown command" }));
+    };
+    let child = tokio::process::Command::new("sh")
+        .arg("-c")
+        .arg(&cmd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn();
+    let mut child = match child {
+        Ok(c) => c,
+        Err(e) => return Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+    };
+    match tokio::time::timeout(std::time::Duration::from_millis(1500), child.wait()).await {
+        Ok(Ok(status)) if status.success() => Json(serde_json::json!({ "ok": true, "status": "done" })),
+        Ok(Ok(status)) => Json(serde_json::json!({
+            "ok": false,
+            "error": format!("exited with {}", status.code().map_or("signal".into(), |c| c.to_string())),
+        })),
+        Ok(Err(e)) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+        Err(_) => {
+            // Still running: reap it in the background so it doesn't become a zombie.
+            tokio::spawn(async move { let _ = child.wait().await; });
+            Json(serde_json::json!({ "ok": true, "status": "started" }))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct CmdSaveBody { id: Option<usize>, label: String, cmd: String }
+/// Create (no `id`) or update (`id`) a command.
+async fn commands_save(State(st): State<Arc<AppState>>, Json(b): Json<CmdSaveBody>) -> impl IntoResponse {
+    let (label, cmd) = (b.label.trim().to_string(), b.cmd.trim().to_string());
+    if label.is_empty() || cmd.is_empty() {
+        return Json(serde_json::json!({ "ok": false, "error": "name and command are required" }));
+    }
+    let mut cfg = st.config.load().as_ref().clone();
+    let entry = config::Command { label, cmd };
+    match b.id {
+        None => cfg.commands.push(entry),
+        Some(i) if i < cfg.commands.len() => cfg.commands[i] = entry,
+        Some(_) => return Json(serde_json::json!({ "ok": false, "error": "unknown command" })),
+    }
+    save_config(&st, cfg)
+}
+
+#[derive(Deserialize)]
+struct CmdDeleteBody { id: usize }
+async fn commands_delete(State(st): State<Arc<AppState>>, Json(b): Json<CmdDeleteBody>) -> impl IntoResponse {
+    let mut cfg = st.config.load().as_ref().clone();
+    if b.id >= cfg.commands.len() {
+        return Json(serde_json::json!({ "ok": false, "error": "unknown command" }));
+    }
+    cfg.commands.remove(b.id);
+    save_config(&st, cfg)
+}
+
+#[derive(Deserialize)]
+struct CmdMoveBody { id: usize, dir: i32 }
+/// Swap a command with its neighbour (`dir` = -1 up, +1 down).
+async fn commands_move(State(st): State<Arc<AppState>>, Json(b): Json<CmdMoveBody>) -> impl IntoResponse {
+    let mut cfg = st.config.load().as_ref().clone();
+    let j = b.id as i64 + b.dir.signum() as i64;
+    if b.id >= cfg.commands.len() || j < 0 || j as usize >= cfg.commands.len() {
+        return Json(serde_json::json!({ "ok": false, "error": "cannot move" }));
+    }
+    cfg.commands.swap(b.id, j as usize);
+    save_config(&st, cfg)
+}
+
+fn save_config(st: &AppState, cfg: config::Config) -> Json<serde_json::Value> {
+    match config::save(&cfg) {
+        Ok(()) => {
+            st.config.store(Arc::new(cfg));
+            Json(serde_json::json!({ "ok": true }))
+        }
+        Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
     }
 }
 

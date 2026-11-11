@@ -385,6 +385,37 @@
           </div>
         </section>
 
+        <!-- Commands: one button per shell command; Manage toggles add/edit/delete -->
+        <section class="panel" id="panel-commands">
+          <div class="phead">
+            <h2>Commands</h2>
+            <span id="cmd-status" class="sub flex-1 truncate"></span>
+            <button id="cmd-manage" class="bg-zinc-800 rounded px-3 py-1 text-sm">Manage</button>
+          </div>
+          <!-- run view -->
+          <div id="cmd-run" class="flex-1 min-h-0 overflow-auto">
+            <div id="cmd-grid" class="grid grid-cols-3 gap-3"></div>
+          </div>
+          <!-- manage view -->
+          <div id="cmd-admin" class="flex-1 min-h-0 overflow-auto hidden">
+            <form id="cmd-form" class="bg-zinc-900 rounded-lg p-3 flex flex-col gap-2 mb-3" autocomplete="off">
+              <input type="hidden" id="cmd-id">
+              <div class="flex gap-2">
+                <input id="cmd-label" placeholder="Name (e.g. Reload Hyprland)" spellcheck="false"
+                  class="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm focus:outline-none focus:border-emerald-600">
+              </div>
+              <textarea id="cmd-cmd" rows="2" placeholder="Shell command (e.g. hyprctl reload)" spellcheck="false" autocapitalize="off"
+                class="bg-zinc-950 border border-zinc-800 rounded px-3 py-2 font-mono text-xs focus:outline-none focus:border-emerald-600"></textarea>
+              <div class="flex gap-2 items-center">
+                <span id="cmd-form-status" class="text-xs flex-1 text-zinc-400"></span>
+                <button type="button" id="cmd-cancel" class="bg-zinc-800 rounded px-4 py-1 text-sm hidden">Cancel</button>
+                <button type="submit" id="cmd-submit" class="bg-emerald-600 rounded px-4 py-1 text-sm font-medium">Add</button>
+              </div>
+            </form>
+            <div id="cmd-list" class="flex flex-col gap-2"></div>
+          </div>
+        </section>
+
         <!-- Remote input: swipeable trackpad ↔ full keyboard -->
         <section class="panel" id="panel-remote">
           <div class="phead">
@@ -633,6 +664,7 @@
           <div class="drow" data-p="voice"><span class="t">›</span> Voice</div>
           <div class="drow" data-p="files"><span class="t">›</span> Files</div>
           <div class="drow" data-p="remote"><span class="t">›</span> Remote</div>
+          <div class="drow" data-p="commands"><span class="t">›</span> Commands</div>
           <div class="drow more" data-p="more"><span class="t">›</span> More …</div>
         </div>
       </div>
@@ -667,6 +699,6 @@
   <div id="img-modal" class="hidden fixed inset-0 z-[100] bg-black flex items-center justify-center p-4 cursor-zoom-out">
     <img id="img-modal-content" class="max-w-full max-h-full rounded-lg object-contain" alt="Fullscreen screenshot">
   </div>
-  <script src="/static/app.js?v=45"></script>
+  <script src="/static/app.js?v=46"></script>
 </body>
 </html>
