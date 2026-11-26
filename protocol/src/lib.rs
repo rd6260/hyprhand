@@ -12,7 +12,12 @@ pub enum InputEvent {
     /// Relative mouse movement.
     Move { dx: i32, dy: i32 },
     /// Scroll wheel (positive = up).
-    Scroll { dy: i32 },
+    /// `dx` is horizontal (positive = right).
+    Scroll { dy: i32, #[serde(default)] dx: i32 },
+    /// Raw touchpad contacts (0..2 fingers, each normalised 0..1 within the pad).
+    /// Fed to a virtual multitouch touchpad so libinput recognises real pinch gestures.
+    /// An empty list means all fingers lifted.
+    Touch { f: Vec<[f32; 2]> },
     /// Mouse button click (press + release).
     Click { b: MouseButton },
     /// Type a Unicode string (converted to keycodes).

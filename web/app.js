@@ -523,7 +523,7 @@ function sendInput(o) {
   // logic mirrors the old touch handlers exactly: 1 pointer = move/tap-left, 2 pointers
   // = scroll/tap-right; plus a wheel handler for mouse scroll.
   const pts = new Map();   // pointerId -> {x, y}
-  let moved = false, startT = 0, wasTwo = false, scrollY = null;
+  let moved = false, startT = 0, wasTwo = false, starts = null, accX = 0, accY = 0, gesture = null;
 
   tp.addEventListener("pointerdown", (ev) => {
     ev.preventDefault();
@@ -533,7 +533,9 @@ function sendInput(o) {
     else if (pts.size === 2) {
       wasTwo = true;
       const a = [...pts.values()];
-      scrollY = (a[0].y + a[1].y) / 2;
+      starts = a.slice(0, 2).map((q) => ({ ...q }));
+      accX = accY = 0;
+      gesture = null;
     }
   });
 
@@ -544,11 +546,43 @@ function sendInput(o) {
     pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
     if (pts.size >= 2) {
       const a = [...pts.values()];
-      const y = (a[0].y + a[1].y) / 2;
-      if (scrollY != null) {
-        const d = y - scrollY;
-        // natural scrolling: content follows the fingers (swipe up -> scroll down)
-        if (Math.abs(d) > 3) { sendInput({ t: "scroll", dy: d < 0 ? -1 : 1 }); scrollY = y; }
+      if (starts) {
+        if (!gesture) {
+          // displacement of each finger since the 2nd finger landed
+          const d0 = { x: a[0].x - starts[0].x, y: a[0].y - starts[0].y };
+          const d1 = { x: a[1].x - starts[1].x, y: a[1].y - starts[1].y };
+          const m0 = Math.hypot(d0.x, d0.y), m1 = Math.hypot(d1.x, d1.y);
+          // Forgiving: wait a little for the slower finger to start (staggered landing),
+          // then call it a pinch whenever both fingers move and the change in their
+          // separation outweighs how much the pair moves together.
+          const hi = Math.max(m0, m1), lo = Math.min(m0, m1);
+          if (hi > 8 && (lo > 4 || hi > 18)) {
+            const ux = starts[1].x - starts[0].x, uy = starts[1].y - starts[0].y;
+            const ul = Math.hypot(ux, uy) || 1;
+            const rel = Math.abs((d1.x - d0.x) * ux + (d1.y - d0.y) * uy) / ul / 2; // per-finger spread
+            const common = Math.hypot(d0.x + d1.x, d0.y + d1.y) / 2;                // shared drift
+            gesture = lo > 4 && lo > 0.2 * hi && rel > 4 && rel > common * 0.8 ? "pinch" : "pan";
+          }
+        }
+        if (gesture === "pinch") {
+          // feed raw contacts to the server's virtual touchpad; libinput does the pinch
+          const r = tp.getBoundingClientRect();
+          sendInput({ t: "touch", f: a.map((p) => [(p.x - r.left) / r.width, (p.y - r.top) / r.height]) });
+          moved = true;
+        } else if (gesture === "pan") {
+          // one finger still + one moving = swipe; use the moving finger's delta
+          // (halved when both fingers move the same way so speed stays consistent)
+          const both = a.every((p, k) => Math.hypot(p.x - starts[k].x, p.y - starts[k].y) > 6);
+          const k = both ? 0.5 : 1;
+          accX += (ev.clientX - prev.x) * k;
+          accY += (ev.clientY - prev.y) * k;
+          const sy = Math.trunc(accY / 3), sx = Math.trunc(accX / 3);
+          if (sy || sx) {
+            // natural scrolling: content follows the fingers
+            sendInput({ t: "scroll", dy: sy ? (sy < 0 ? -1 : 1) : 0, dx: sx ? (sx < 0 ? 1 : -1) : 0 });
+            accY -= sy * 3; accX -= sx * 3; moved = true;
+          }
+        }
       }
       return;
     }
@@ -561,10 +595,11 @@ function sendInput(o) {
   function tpUp(ev) {
     if (!pts.has(ev.pointerId)) return;
     pts.delete(ev.pointerId);
+    if (pts.size < 2 && gesture === "pinch") { sendInput({ t: "touch", f: [] }); gesture = "done"; }
     if (pts.size > 0) return;                 // wait for the last pointer to lift
     const quick = Date.now() - startT < (wasTwo ? 300 : 250);
     if (!moved && quick) sendInput({ t: "click", b: wasTwo ? "right" : "left" });
-    wasTwo = false; scrollY = null;
+    wasTwo = false; starts = null; gesture = null;
   }
   tp.addEventListener("pointerup", tpUp);
   tp.addEventListener("pointercancel", tpUp);

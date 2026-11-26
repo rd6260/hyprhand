@@ -138,7 +138,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/audio/mute", post(audio_mute))
         .route("/audio/sink", post(audio_sink))
         .route("/audio/source", post(audio_source_route))
-        .route("/media/{action}", post(media_action))
+        .route("/media/:action", post(media_action))
         .route("/media/seek", post(media_seek))
         .route("/media/art", get(media_art))
         // Brightness

@@ -107,7 +107,8 @@ async fn handle_ws_input(socket: WebSocket, st: Arc<AppState>) {
 async fn dispatch_input(event: InputEvent, st: &AppState) -> anyhow::Result<()> {
     match event {
         InputEvent::Move { dx, dy } => hid::mouse_move(dx, dy)?,
-        InputEvent::Scroll { dy } => hid::mouse_scroll(dy)?,
+        InputEvent::Scroll { dy, dx } => hid::mouse_scroll(dy, dx)?,
+        InputEvent::Touch { f } => hid::touch_frame(&f)?,
         InputEvent::Click { b } => hid::mouse_click(b)?,
         InputEvent::Text { text } => hid::type_text(&text)?,
         InputEvent::Key { key, down } => hid::key_event(&key, down)?,

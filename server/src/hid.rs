@@ -90,8 +90,100 @@ pub fn mouse_move(dx: i32, dy: i32) -> anyhow::Result<()> {
     ])
 }
 
-pub fn mouse_scroll(dy: i32) -> anyhow::Result<()> {
-    emit(&[rel_ev(RelativeAxisType::REL_WHEEL, dy), syn()])
+pub fn mouse_scroll(dy: i32, dx: i32) -> anyhow::Result<()> {
+    let mut evs = vec![];
+    if dy != 0 { evs.push(rel_ev(RelativeAxisType::REL_WHEEL, dy)); }
+    if dx != 0 { evs.push(rel_ev(RelativeAxisType::REL_HWHEEL, dx)); }
+    evs.push(syn());
+    emit(&evs)
+}
+
+// ── Virtual multitouch touchpad (so libinput sees real pinch gestures) ────────
+
+const PAD_W: i32 = 4000;
+const PAD_H: i32 = 2400;
+const PAD_RES: i32 = 40; // units/mm → a 100 x 60 mm pad
+
+struct Pad {
+    dev: VirtualDevice,
+    fingers: usize,
+    next_id: i32,
+}
+
+static PAD: OnceLock<Mutex<Option<Pad>>> = OnceLock::new();
+
+fn create_pad() -> Option<Pad> {
+    use evdev::{AbsInfo, AbsoluteAxisType as A, PropType, UinputAbsSetup};
+    let build = || -> std::io::Result<VirtualDevice> {
+        let mut keys = AttributeSet::<Key>::new();
+        keys.insert(Key::BTN_LEFT);
+        keys.insert(Key::BTN_TOUCH);
+        keys.insert(Key::BTN_TOOL_FINGER);
+        keys.insert(Key::BTN_TOOL_DOUBLETAP);
+        let mut props = AttributeSet::<PropType>::new();
+        props.insert(PropType::POINTER);
+        props.insert(PropType::BUTTONPAD);
+        let xi = AbsInfo::new(0, 0, PAD_W, 0, 0, PAD_RES);
+        let yi = AbsInfo::new(0, 0, PAD_H, 0, 0, PAD_RES);
+        VirtualDeviceBuilder::new()?
+            .name("hyprhand-touchpad")
+            .with_keys(&keys)?
+            .with_properties(&props)?
+            .with_absolute_axis(&UinputAbsSetup::new(A::ABS_X, xi))?
+            .with_absolute_axis(&UinputAbsSetup::new(A::ABS_Y, yi))?
+            .with_absolute_axis(&UinputAbsSetup::new(A::ABS_MT_SLOT, AbsInfo::new(0, 0, 1, 0, 0, 0)))?
+            .with_absolute_axis(&UinputAbsSetup::new(A::ABS_MT_TRACKING_ID, AbsInfo::new(0, -1, 65535, 0, 0, 0)))?
+            .with_absolute_axis(&UinputAbsSetup::new(A::ABS_MT_POSITION_X, xi))?
+            .with_absolute_axis(&UinputAbsSetup::new(A::ABS_MT_POSITION_Y, yi))?
+            .build()
+    };
+    match build() {
+        Ok(dev) => {
+            tracing::info!("Created virtual touchpad (hyprhand-touchpad)");
+            Some(Pad { dev, fingers: 0, next_id: 1 })
+        }
+        Err(e) => {
+            tracing::warn!("Cannot create virtual touchpad: {e}");
+            None
+        }
+    }
+}
+
+/// One touchpad frame: `f` holds 0..=2 contacts, normalised 0..1. Empty = lift.
+pub fn touch_frame(f: &[[f32; 2]]) -> anyhow::Result<()> {
+    use evdev::AbsoluteAxisType as A;
+    let mut guard = PAD.get_or_init(|| Mutex::new(create_pad())).lock().unwrap();
+    let pad = guard.as_mut().ok_or_else(|| anyhow::anyhow!("virtual touchpad unavailable"))?;
+    let n = f.len().min(2);
+    let abs = |a: A, v: i32| InputEvent::new(EventType::ABSOLUTE, a.0, v);
+    let mut evs = vec![];
+    for i in 0..2usize {
+        if i < n {
+            evs.push(abs(A::ABS_MT_SLOT, i as i32));
+            if i >= pad.fingers {
+                evs.push(abs(A::ABS_MT_TRACKING_ID, pad.next_id));
+                pad.next_id = (pad.next_id + 1) % 65535;
+            }
+            let x = (f[i][0].clamp(0.0, 1.0) * PAD_W as f32) as i32;
+            let y = (f[i][1].clamp(0.0, 1.0) * PAD_H as f32) as i32;
+            evs.push(abs(A::ABS_MT_POSITION_X, x));
+            evs.push(abs(A::ABS_MT_POSITION_Y, y));
+            if i == 0 {
+                evs.push(abs(A::ABS_X, x));
+                evs.push(abs(A::ABS_Y, y));
+            }
+        } else if i < pad.fingers {
+            evs.push(abs(A::ABS_MT_SLOT, i as i32));
+            evs.push(abs(A::ABS_MT_TRACKING_ID, -1));
+        }
+    }
+    evs.push(key_ev(Key::BTN_TOUCH, n > 0));
+    evs.push(key_ev(Key::BTN_TOOL_FINGER, n == 1));
+    evs.push(key_ev(Key::BTN_TOOL_DOUBLETAP, n == 2));
+    evs.push(syn());
+    pad.fingers = n;
+    pad.dev.emit(&evs)?;
+    Ok(())
 }
 
 pub fn mouse_click(button: MouseButton) -> anyhow::Result<()> {
